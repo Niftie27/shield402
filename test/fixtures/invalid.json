@@ -1,0 +1,6 @@
+{
+  "chain": "ethereum",
+  "pair": "ETH/USDC",
+  "amount_in": -5,
+  "slippage_bps": 150
+}

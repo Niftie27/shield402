@@ -1,0 +1,8 @@
+{
+  "chain": "solana",
+  "pair": "SOL/USDC",
+  "amount_in": 15,
+  "amount_in_symbol": "SOL",
+  "slippage_bps": 200,
+  "send_mode": "standard"
+}
