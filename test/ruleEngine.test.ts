@@ -234,7 +234,7 @@ describe("result aggregation", () => {
   it("returns rule_details for every rule even when not triggered", () => {
     const result = evaluateTrade(makeTrade());
 
-    // 5 rules should always appear in rule_details
-    expect(result.rule_details).toHaveLength(5);
+    // 6 rules should always appear in rule_details (5 static + 1 live-data)
+    expect(result.rule_details).toHaveLength(6);
   });
 });

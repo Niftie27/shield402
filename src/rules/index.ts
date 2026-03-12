@@ -1,5 +1,6 @@
 import type { ValidatedTradeCheck } from "../schema/checkTradeSchema";
 import type { RuleResult, RiskLevel, Confidence, TradeCheckResult } from "../types/result";
+import type { LiveContext } from "../data/liveContext";
 import type { Rule } from "./rule";
 
 import { slippageRule } from "./slippageRule";
@@ -7,6 +8,7 @@ import { sendModeRule } from "./sendModeRule";
 import { sizeRiskRule } from "./sizeRiskRule";
 import { missingFieldsRule } from "./missingFieldsRule";
 import { unsafeCombinationRule } from "./unsafeCombinationRule";
+import { priceImpactRule } from "./priceImpactRule";
 
 /**
  * All active rules, in evaluation order.
@@ -19,6 +21,7 @@ const allRules: Rule[] = [
   sizeRiskRule,
   missingFieldsRule,
   unsafeCombinationRule,
+  priceImpactRule,
 ];
 
 /**
@@ -112,13 +115,13 @@ function pickRecommendation(
 /**
  * Determine confidence level.
  *
- * v1 is always "medium" because we're running static rules
- * without live chain data. This is honest — we're not pretending
- * to know more than we do.
+ * - "medium" when running static rules only (no live data).
+ * - "high" when live market data (e.g. Jupiter quote) is available.
  *
- * When v2 adds live data, confidence can go up.
+ * This is honest — we tell callers when we have real data vs heuristics.
  */
-function determineConfidence(_results: RuleResult[]): Confidence {
+function determineConfidence(liveContext?: LiveContext): Confidence {
+  if (liveContext?.jupiter) return "high";
   return "medium";
 }
 
@@ -126,14 +129,20 @@ function determineConfidence(_results: RuleResult[]): Confidence {
  * Run all rules against a validated trade and return the full result.
  *
  * This is the core of Shield402 Lite. Everything else is plumbing.
+ *
+ * Live context is optional — when absent, rules fall back to static checks
+ * and confidence stays at "medium".
  */
-export function evaluateTrade(trade: ValidatedTradeCheck): TradeCheckResult {
-  const ruleResults = allRules.map((rule) => rule.evaluate(trade));
+export function evaluateTrade(
+  trade: ValidatedTradeCheck,
+  liveContext?: LiveContext,
+): TradeCheckResult {
+  const ruleResults = allRules.map((rule) => rule.evaluate(trade, liveContext));
 
   const riskLevel = aggregateRiskLevel(ruleResults);
   const reason = pickReason(ruleResults);
   const recommendation = pickRecommendation(ruleResults, trade);
-  const confidence = determineConfidence(ruleResults);
+  const confidence = determineConfidence(liveContext);
   const triggeredRules = ruleResults
     .filter((r) => r.triggered)
     .map((r) => r.rule_id);

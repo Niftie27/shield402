@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { tradeCheckSchema } from "../schema/checkTradeSchema";
 import { evaluateTrade } from "../rules/index";
+import { fetchLiveContext } from "../data/liveContext";
 import {
   generateRequestId,
   buildRequestLog,
@@ -12,11 +13,10 @@ import {
  * POST /check-trade
  *
  * Accepts a proposed Solana trade configuration.
+ * Fetches live market data (if configured), then runs the rule engine.
  * Returns a risk assessment with label, reason, and recommendation.
- *
- * No x402 payment required yet — that wraps this in a later commit.
  */
-export function handleCheckTrade(req: Request, res: Response): void {
+export async function handleCheckTrade(req: Request, res: Response): Promise<void> {
   const requestId = generateRequestId();
   const startTime = performance.now();
 
@@ -38,16 +38,20 @@ export function handleCheckTrade(req: Request, res: Response): void {
     return;
   }
 
-  // 2. Run rule engine
   const trade = parsed.data;
-  const result = evaluateTrade(trade);
 
-  // 3. Log for observability
+  // 2. Fetch live market data (fails open — returns {} if unavailable)
+  const liveContext = await fetchLiveContext(trade);
+
+  // 3. Run rule engine (synchronous, uses live context if available)
+  const result = evaluateTrade(trade, liveContext);
+
+  // 4. Log for observability
   const durationMs = Math.round(performance.now() - startTime);
   const logEntry = buildRequestLog(requestId, trade, result, durationMs);
   logRequest(logEntry);
 
-  // 4. Return result
+  // 5. Return result
   res.status(200).json({
     request_id: requestId,
     ...result,

@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import { tradeCheckSchema } from "../schema/checkTradeSchema";
 import { evaluateTrade } from "../rules/index";
+import { fetchLiveContext } from "../data/liveContext";
 import type { TradeCheckResult } from "../types/result";
 
 const EXAMPLE_JSON = `{
@@ -67,8 +68,9 @@ export async function handleTradeMessage(ctx: Context) {
     return;
   }
 
-  // Run rule engine
-  const result = evaluateTrade(parsed.data);
+  // Fetch live data and run rule engine
+  const liveContext = await fetchLiveContext(parsed.data);
+  const result = evaluateTrade(parsed.data, liveContext);
   await ctx.reply(formatResult(result), { parse_mode: "HTML" });
 }
 
@@ -90,7 +92,10 @@ function formatResult(r: TradeCheckResult): string {
     }
   }
 
-  msg += `\n<i>Confidence: ${r.confidence} (static rules, no live chain data)</i>`;
+  const dataNote = r.confidence === "high"
+    ? "static rules + live market data"
+    : "static rules only, no live data";
+  msg += `\n<i>Confidence: ${r.confidence} (${dataNote})</i>`;
 
   return msg;
 }
