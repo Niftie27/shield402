@@ -77,13 +77,27 @@ export async function handleTradeMessage(ctx: Context) {
 /** Format a TradeCheckResult as a readable Telegram message */
 function formatResult(r: TradeCheckResult): string {
   const icon =
-    r.risk_level === "high" ? "🔴" :
-    r.risk_level === "caution" ? "🟡" :
+    r.decision === "block" ? "🔴" :
+    r.decision === "warn" ? "🟡" :
     "🟢";
 
-  let msg = `${icon} <b>Risk: ${r.risk_level.toUpperCase()}</b>\n\n`;
+  const label =
+    r.decision === "block" ? "BLOCK — do not send as-is" :
+    r.decision === "warn" ? "WARN — consider adjustments" :
+    "ALLOW — proceed normally";
+
+  let msg = `${icon} <b>${label}</b>\n\n`;
   msg += `<b>Reason:</b> ${escapeHtml(r.reason)}\n\n`;
   msg += `<b>Recommendation:</b> ${escapeHtml(r.recommendation)}\n`;
+
+  // Show concrete safer parameters when available
+  const p = r.policy;
+  if (p.recommended_slippage_bps || p.recommended_send_mode || p.recommended_priority_fee_lamports) {
+    msg += `\n<b>Safer parameters:</b>\n`;
+    if (p.recommended_slippage_bps) msg += `• slippage: ${p.recommended_slippage_bps} bps\n`;
+    if (p.recommended_send_mode) msg += `• send mode: ${p.recommended_send_mode}\n`;
+    if (p.recommended_priority_fee_lamports) msg += `• priority fee: ${p.recommended_priority_fee_lamports} lamports\n`;
+  }
 
   if (r.triggered_rules.length > 0) {
     msg += `\n<b>Triggered rules:</b>\n`;
@@ -95,7 +109,7 @@ function formatResult(r: TradeCheckResult): string {
   const dataNote = r.confidence === "high"
     ? "static rules + live market data"
     : "static rules only, no live data";
-  msg += `\n<i>Confidence: ${r.confidence} (${dataNote})</i>`;
+  msg += `\n<i>Confidence: ${r.confidence} (${dataNote}) · policy ${r.policy_version}</i>`;
 
   return msg;
 }

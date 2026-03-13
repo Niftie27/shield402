@@ -238,3 +238,68 @@ describe("result aggregation", () => {
     expect(result.rule_details).toHaveLength(6);
   });
 });
+
+// --- Policy decision ---
+
+describe("policy decision", () => {
+  it("returns allow for low-risk trades", () => {
+    const result = evaluateTrade(makeTrade());
+
+    expect(result.decision).toBe("allow");
+    expect(result.policy).toEqual({});
+    expect(result.policy_version).toBe("0.2.0");
+  });
+
+  it("returns warn for caution-level trades", () => {
+    const result = evaluateTrade(makeTrade({ slippage_bps: 150 }));
+
+    expect(result.decision).toBe("warn");
+  });
+
+  it("returns block for high-risk trades", () => {
+    const result = evaluateTrade(
+      makeTrade({
+        amount_in: 20,
+        slippage_bps: 200,
+        send_mode: "standard",
+      })
+    );
+
+    expect(result.decision).toBe("block");
+  });
+
+  it("recommends tighter slippage when slippage rule fires", () => {
+    const result = evaluateTrade(makeTrade({ slippage_bps: 150 }));
+
+    expect(result.policy.recommended_slippage_bps).toBe(75);
+  });
+
+  it("recommends very tight slippage for extreme values", () => {
+    const result = evaluateTrade(makeTrade({ slippage_bps: 400 }));
+
+    expect(result.policy.recommended_slippage_bps).toBe(50);
+  });
+
+  it("recommends protected send when unprotected", () => {
+    const result = evaluateTrade(makeTrade({ send_mode: "standard" }));
+
+    expect(result.policy.recommended_send_mode).toBe("protected");
+  });
+
+  it("recommends priority fee when missing", () => {
+    const result = evaluateTrade(
+      makeTrade({ priority_fee_lamports: undefined })
+    );
+
+    expect(result.policy.recommended_priority_fee_lamports).toBe(10000);
+  });
+
+  it("returns empty policy for allow decisions", () => {
+    const result = evaluateTrade(makeTrade());
+
+    expect(result.decision).toBe("allow");
+    expect(result.policy.recommended_slippage_bps).toBeUndefined();
+    expect(result.policy.recommended_send_mode).toBeUndefined();
+    expect(result.policy.recommended_priority_fee_lamports).toBeUndefined();
+  });
+});

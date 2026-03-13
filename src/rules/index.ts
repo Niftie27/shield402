@@ -1,5 +1,12 @@
 import type { ValidatedTradeCheck } from "../schema/checkTradeSchema";
-import type { RuleResult, RiskLevel, Confidence, TradeCheckResult } from "../types/result";
+import type {
+  RuleResult,
+  RiskLevel,
+  Confidence,
+  PolicyDecision,
+  PolicyRecommendation,
+  TradeCheckResult,
+} from "../types/result";
 import type { LiveContext } from "../data/liveContext";
 import type { Rule } from "./rule";
 
@@ -126,9 +133,62 @@ function determineConfidence(liveContext?: LiveContext): Confidence {
 }
 
 /**
+ * Map risk level to a policy decision.
+ *
+ * - low    → allow  (proceed normally)
+ * - caution → warn  (consider adjustments)
+ * - high   → block  (do not send as-is)
+ */
+function deriveDecision(riskLevel: RiskLevel): PolicyDecision {
+  switch (riskLevel) {
+    case "low": return "allow";
+    case "caution": return "warn";
+    case "high": return "block";
+  }
+}
+
+/**
+ * Generate concrete safer parameters based on triggered rules.
+ *
+ * Only populated when decision is "warn" or "block".
+ * A bot can use these values directly instead of parsing the reason string.
+ */
+function buildPolicyRecommendation(
+  riskLevel: RiskLevel,
+  triggeredRuleIds: string[],
+  trade: ValidatedTradeCheck,
+): PolicyRecommendation {
+  if (riskLevel === "low") return {};
+
+  const policy: PolicyRecommendation = {};
+  const triggered = new Set(triggeredRuleIds);
+
+  // Recommend tighter slippage
+  if (triggered.has("slippage_too_wide") || triggered.has("unsafe_combination") || triggered.has("large_trade_loose_settings")) {
+    // For very wide slippage, recommend 50 bps. Otherwise 75 bps.
+    policy.recommended_slippage_bps = trade.slippage_bps > 300 ? 50 : 75;
+  }
+
+  // Recommend protected send
+  if (triggered.has("unprotected_send_mode") || triggered.has("unsafe_combination")) {
+    policy.recommended_send_mode = "protected";
+  }
+
+  // Recommend a priority fee if missing or too low
+  if (triggered.has("missing_execution_params") || triggered.has("large_trade_loose_settings")) {
+    policy.recommended_priority_fee_lamports = 10000;
+  }
+
+  return policy;
+}
+
+/** Current policy engine version. Bump when rules or decision logic change. */
+const POLICY_VERSION = "0.2.0";
+
+/**
  * Run all rules against a validated trade and return the full result.
  *
- * This is the core of Shield402 Lite. Everything else is plumbing.
+ * This is the core of Shield402. Everything else is plumbing.
  *
  * Live context is optional — when absent, rules fall back to static checks
  * and confidence stays at "medium".
@@ -143,16 +203,22 @@ export function evaluateTrade(
   const reason = pickReason(ruleResults);
   const recommendation = pickRecommendation(ruleResults, trade);
   const confidence = determineConfidence(liveContext);
-  const triggeredRules = ruleResults
+  const triggeredRuleIds = ruleResults
     .filter((r) => r.triggered)
     .map((r) => r.rule_id);
 
+  const decision = deriveDecision(riskLevel);
+  const policy = buildPolicyRecommendation(riskLevel, triggeredRuleIds, trade);
+
   return {
+    decision,
+    policy,
+    policy_version: POLICY_VERSION,
     risk_level: riskLevel,
     reason,
     recommendation,
     confidence,
-    triggered_rules: triggeredRules,
+    triggered_rules: triggeredRuleIds,
     rule_details: ruleResults,
   };
 }
