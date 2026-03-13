@@ -1,23 +1,27 @@
-# Shield402 Lite
+# Shield402
 
-A pre-trade safety API for Solana, paid via [x402](https://x402.org).
+A pre-trade safety API for Solana. Checks proposed trade configurations before send and returns a risk assessment with actionable recommendations.
 
-Send a proposed trade configuration → get back a risk label, reason, and one safer recommendation.
+Available as an HTTP API (with optional x402 micropayment gating) and a Telegram bot.
 
-## What this is
+## What this does
 
-A simple API that checks a Solana trade setup before you send it and tells you if something looks risky. It runs deterministic rules against your trade config and returns advice. Callers pay per request using the x402 micropayment protocol.
+You send a proposed Solana trade configuration. Shield402 runs it through a rule engine that combines static checks with live market data from Jupiter, and returns:
 
-## What this is NOT
+- a **risk level** (low / caution / high)
+- a **reason** explaining the risk
+- a **recommendation** for what to change
+- which **rules triggered** and why
+- a **confidence level** (medium = static rules only, high = static + live data)
 
-- Not a guaranteed anti-MEV solution
-- Not an execution engine
-- Not a routing optimizer
-- Not a wallet
-- Not a trading bot
-- Not a replacement for Jito, Jupiter, or any execution infrastructure
+## What this does NOT do
 
-v1 uses static rule-based checks. It doesn't have live chain data. It catches obvious misconfigurations, not sophisticated attacks.
+- Does not execute, route, or send trades
+- Does not guarantee protection from MEV or sandwich attacks
+- Does not replace Jito, Jupiter, or any execution infrastructure
+- Does not verify on-chain state of the caller's transaction
+
+Shield402 is an advisory layer. It catches risky configurations and suggests safer settings. It does not enforce them.
 
 ## Quick start
 
@@ -27,9 +31,7 @@ cp .env.example .env    # then edit .env with your values
 npm run dev
 ```
 
-By default, x402 payment is **disabled** so you can test the API freely. To enable it, see [x402 Setup](#x402-setup) below.
-
-## Usage
+## API usage
 
 ```bash
 curl -X POST http://localhost:3402/check-trade \
@@ -49,66 +51,74 @@ Example response:
 ```json
 {
   "request_id": "req_abc123_0001",
-  "risk_level": "caution",
-  "reason": "Slippage of 200 bps is wider than recommended. (3 risk factors detected)",
-  "recommendation": "Reduce slippage to 75 bps or lower.",
-  "confidence": "medium",
+  "risk_level": "high",
+  "reason": "Dangerous combination: large trade (25 SOL), wide slippage (200 bps), and standard send mode. (5 risk factors detected)",
+  "recommendation": "Tighten slippage, switch to protected send mode, and consider splitting the trade.",
+  "confidence": "high",
   "triggered_rules": [
     "slippage_too_wide",
     "unprotected_send_mode",
-    "large_trade_loose_settings"
+    "large_trade_loose_settings",
+    "missing_execution_params",
+    "unsafe_combination"
   ],
   "rule_details": [...]
 }
 ```
 
-When x402 is enabled, requests without payment receive `402 Payment Required` with a `PAYMENT-REQUIRED` header containing payment instructions.
+## Telegram bot
 
-## v1 Rules
+Set `TELEGRAM_BOT_TOKEN` in `.env` and the bot starts alongside the API server. Send trade configs as JSON messages and get risk assessments back.
+
+The bot calls the rule engine directly (bypasses x402 payment gating).
+
+## Rules
+
+**Static rules** (always active):
 
 1. **Slippage too wide** — flags slippage above configurable thresholds
 2. **Unprotected send mode** — flags standard or unknown send modes
 3. **Large trade + loose settings** — flags big trades with wide slippage or low priority fees
 4. **Missing execution params** — flags omitted priority fee
-5. **Unsafe combination** — flags the worst case: large + wide slippage + unprotected
+5. **Unsafe combination** — escalates when multiple risk factors combine
+
+**Live data rules** (active when providers are configured):
+
+6. **High price impact** — queries Jupiter for real-time price impact on the proposed swap
 
 Thresholds are in `src/config/riskConfig.ts`.
 
-## x402 Setup
+## Live market data
 
-Shield402 uses x402 to charge a small fee per safety check. Payment is handled automatically by the x402 protocol — callers include a payment proof in their request header, and the facilitator settles it.
+When `JUPITER_API_KEY` is set, Shield402 fetches a real-time quote from Jupiter before evaluating rules. This enables the price impact check and upgrades confidence from "medium" to "high".
 
-### 1. Get a Solana wallet
+If Jupiter is unavailable or times out (3s), the API falls back to static rules only. It never blocks or fails because of a provider outage.
 
-You need a Solana wallet address (base58) to receive payments. For devnet testing, any devnet wallet works.
+## x402 payment gating
 
-### 2. Configure .env
+Shield402 supports optional x402 micropayment gating on `POST /check-trade`. When enabled, unpaid requests receive `402 Payment Required` with payment instructions. Paid requests get the full risk assessment.
 
-```bash
-X402_ENABLED=true
-SVM_ADDRESS=<your-solana-base58-address>
-FACILITATOR_URL=https://x402.org/facilitator
-X402_NETWORK=solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1
-X402_PRICE=$0.001
-```
+Disabled by default. Set `X402_ENABLED=true` in `.env` to enable. See `.env.example` for all required variables.
 
-- `X402_ENABLED` — set to `true` to require payment, `false` for free access
-- `SVM_ADDRESS` — your Solana address that receives payments
-- `FACILITATOR_URL` — payment facilitator (`https://x402.org/facilitator` for devnet)
-- `X402_NETWORK` — Solana network in CAIP-2 format (devnet shown above)
-- `X402_PRICE` — price per call in USD
-
-### 3. Start the server
-
-```bash
-npm run dev
-```
-
-You should see confirmation that x402 is enabled in the startup logs.
+`GET /health` is always free regardless of x402 setting.
 
 ### Known x402 limitation
 
-In the current Express middleware implementation, settlement occurs after the route handler completes regardless of HTTP status code. This means invalid requests that return 400 may still be settled. This is a known behavior of the x402 Express middleware and is acceptable for devnet testing. A production deployment should add lifecycle hooks to skip settlement on client errors.
+The Express middleware settles payment after the route handler completes regardless of HTTP status code. Invalid requests returning 400 may still be settled. Acceptable for devnet; production deployment should add lifecycle hooks to skip settlement on client errors.
+
+## Configuration
+
+All configuration is via environment variables. See `.env.example` for the full list:
+
+- `PORT` — server port (default 3402)
+- `X402_ENABLED` — enable/disable payment gating
+- `SVM_ADDRESS` — Solana wallet for receiving payments
+- `FACILITATOR_URL` — x402 facilitator endpoint
+- `X402_NETWORK` — Solana network in CAIP-2 format
+- `X402_PRICE` — price per call in USD
+- `TELEGRAM_BOT_TOKEN` — Telegram bot token (optional)
+- `JUPITER_API_KEY` — Jupiter API key for live price impact (optional)
+- `SOLANA_RPC_URL` — reserved for future live chain queries (optional)
 
 ## Testing
 
@@ -116,17 +126,30 @@ In the current Express middleware implementation, settlement occurs after the ro
 npm test
 ```
 
-Tests run with x402 disabled so they don't need a facilitator connection.
+41 tests covering rule engine, schema validation, and HTTP integration. Tests run with x402 disabled and without live data providers.
 
-## Roadmap
+## Current status
 
-- [x] Rule engine and schema validation
-- [x] Structured request logging
-- [x] Automated tests
-- [x] x402 payment wrapping
-- [ ] Telegram bot interface
-- [ ] Live chain data integration
-- [ ] MCP server exposure
+- [x] Rule engine with 5 static rules + 1 live data rule
+- [x] Zod schema validation
+- [x] Structured JSON request logging
+- [x] HTTP integration tests
+- [x] x402 payment wrapping (Solana devnet)
+- [x] Telegram bot interface
+- [x] Jupiter live price impact integration
+- [ ] Buyer validation — does anyone want this enough to integrate?
+- [ ] Policy layer reframing (allow / warn / block)
+- [ ] MCP server for AI agent discovery
+- [ ] Additional live signals (liquidity, volume)
+
+## Known limitations
+
+- Solana only
+- Trusts caller-supplied `send_mode` — does not verify on-chain protection
+- Size risk rule only calibrated for SOL-denominated trades
+- Thresholds are static estimates, not dynamically adjusted
+- No persistent storage — logs go to stdout only
+- Not production-hardened (no rate limiting, auth, or deployment config)
 
 ## License
 
