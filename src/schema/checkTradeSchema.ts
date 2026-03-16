@@ -1,10 +1,17 @@
 import { z } from "zod";
 
 /**
+ * Base58 regex for Solana mint addresses.
+ * Solana addresses are 32-44 characters of base58 (no 0, O, I, l).
+ */
+const base58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/**
  * Validates incoming /check-trade requests.
  *
- * Strict in v1: only "solana" chain, only known send modes.
- * Optional fields have sensible defaults or are truly optional.
+ * Mint-based contract: callers provide actual Solana mint addresses.
+ * This removes the ambiguity of ticker symbols and ensures the system
+ * always checks the correct tokens.
  */
 export const tradeCheckSchema = z.object({
   chain: z
@@ -12,20 +19,17 @@ export const tradeCheckSchema = z.object({
       errorMap: () => ({ message: "Only 'solana' is supported in v1." }),
     }),
 
-  pair: z
+  input_mint: z
     .string()
-    .min(3, "Pair must be at least 3 characters, e.g. 'SOL/USDC'.")
-    .max(30),
+    .regex(base58, "input_mint must be a valid Solana base58 address."),
+
+  output_mint: z
+    .string()
+    .regex(base58, "output_mint must be a valid Solana base58 address."),
 
   amount_in: z
     .number()
     .positive("amount_in must be a positive number."),
-
-  amount_in_symbol: z
-    .string()
-    .min(1)
-    .max(10)
-    .transform((s) => s.toUpperCase()),
 
   slippage_bps: z
     .number()
@@ -39,6 +43,16 @@ export const tradeCheckSchema = z.object({
     .number()
     .int()
     .min(0)
+    .optional(),
+
+  input_symbol: z
+    .string()
+    .max(10)
+    .optional(),
+
+  output_symbol: z
+    .string()
+    .max(10)
     .optional(),
 
   route_hint: z

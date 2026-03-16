@@ -16,6 +16,7 @@ import { sizeRiskRule } from "./sizeRiskRule";
 import { missingFieldsRule } from "./missingFieldsRule";
 import { unsafeCombinationRule } from "./unsafeCombinationRule";
 import { priceImpactRule } from "./priceImpactRule";
+import { tokenRiskRule } from "./tokenRiskRule";
 
 /**
  * All active rules, in evaluation order.
@@ -29,6 +30,7 @@ const allRules: Rule[] = [
   missingFieldsRule,
   unsafeCombinationRule,
   priceImpactRule,
+  tokenRiskRule,
 ];
 
 /**
@@ -114,6 +116,12 @@ function pickRecommendation(
     case "missing_execution_params":
       return "Specify priority_fee_lamports for better transaction landing.";
 
+    case "high_price_impact":
+      return "Reduce trade size or split into smaller trades to lower price impact.";
+
+    case "token_risk":
+      return "Token flagged by risk scanner. Review token safety before trading.";
+
     default:
       return "Review trade parameters before sending.";
   }
@@ -123,13 +131,23 @@ function pickRecommendation(
  * Determine confidence level.
  *
  * - "medium" when running static rules only (no live data).
- * - "high" when live market data (e.g. Jupiter quote) is available.
+ * - "high" when any live data source (Jupiter or Rugcheck) is available.
  *
  * This is honest — we tell callers when we have real data vs heuristics.
  */
 function determineConfidence(liveContext?: LiveContext): Confidence {
-  if (liveContext?.jupiter) return "high";
+  if (liveContext?.jupiter || liveContext?.rugcheck_input || liveContext?.rugcheck_output) return "high";
   return "medium";
+}
+
+/**
+ * Determine which live data providers contributed to this assessment.
+ */
+function determineLiveSources(liveContext?: LiveContext): string[] {
+  const sources: string[] = [];
+  if (liveContext?.jupiter) sources.push("jupiter");
+  if (liveContext?.rugcheck_input || liveContext?.rugcheck_output) sources.push("rugcheck");
+  return sources;
 }
 
 /**
@@ -179,11 +197,19 @@ function buildPolicyRecommendation(
     policy.recommended_priority_fee_lamports = 10000;
   }
 
+  // Recommend tighter slippage for high price impact (the trade is moving the market)
+  if (triggered.has("high_price_impact")) {
+    // If slippage recommendation not already set by another rule, set it now
+    if (!policy.recommended_slippage_bps) {
+      policy.recommended_slippage_bps = trade.slippage_bps > 300 ? 50 : 75;
+    }
+  }
+
   return policy;
 }
 
 /** Current policy engine version. Bump when rules or decision logic change. */
-const POLICY_VERSION = "0.2.0";
+const POLICY_VERSION = "0.4.0";
 
 /**
  * Run all rules against a validated trade and return the full result.
@@ -203,6 +229,7 @@ export function evaluateTrade(
   const reason = pickReason(ruleResults);
   const recommendation = pickRecommendation(ruleResults, trade);
   const confidence = determineConfidence(liveContext);
+  const liveSources = determineLiveSources(liveContext);
   const triggeredRuleIds = ruleResults
     .filter((r) => r.triggered)
     .map((r) => r.rule_id);
@@ -218,6 +245,7 @@ export function evaluateTrade(
     reason,
     recommendation,
     confidence,
+    live_sources: liveSources,
     triggered_rules: triggeredRuleIds,
     rule_details: ruleResults,
   };

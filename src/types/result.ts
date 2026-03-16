@@ -65,6 +65,9 @@ export interface TradeCheckResult {
   /** Which rules fired. */
   triggered_rules: string[];
 
+  /** Which live data providers contributed to this assessment. */
+  live_sources: string[];
+
   /** Full rule-by-rule breakdown. Useful for debugging and observability. */
   rule_details: RuleResult[];
 }

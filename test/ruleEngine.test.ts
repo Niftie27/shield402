@@ -1,15 +1,19 @@
 import { describe, it, expect } from "vitest";
 import { evaluateTrade } from "../src/rules/index";
 import type { ValidatedTradeCheck } from "../src/schema/checkTradeSchema";
+import { SOL_MINT, TOKEN_MINTS } from "../src/data/mints";
+
+const USDC_MINT = TOKEN_MINTS["USDC"];
+const BONK_MINT = TOKEN_MINTS["BONK"];
 
 // Helper to build a trade request with sensible defaults.
 // Override only what you need per test.
 function makeTrade(overrides: Partial<ValidatedTradeCheck> = {}): ValidatedTradeCheck {
   return {
     chain: "solana",
-    pair: "SOL/USDC",
+    input_mint: SOL_MINT,
+    output_mint: USDC_MINT,
     amount_in: 2,
-    amount_in_symbol: "SOL",
     slippage_bps: 50,
     send_mode: "protected",
     priority_fee_lamports: 5000,
@@ -109,11 +113,12 @@ describe("size risk rule", () => {
     expect(sizeDetail?.severity).toBe("high");
   });
 
-  it("skips size check for non-SOL tokens", () => {
+  it("skips size check for non-SOL input tokens", () => {
     const result = evaluateTrade(
       makeTrade({
+        input_mint: BONK_MINT,
+        output_mint: USDC_MINT,
         amount_in: 100,
-        amount_in_symbol: "BONK",
         slippage_bps: 500,
         send_mode: "standard",
       })
@@ -225,17 +230,23 @@ describe("result aggregation", () => {
     expect(result.recommendation.length).toBeGreaterThan(0);
   });
 
-  it("always returns confidence as medium in v1", () => {
+  it("returns confidence as medium when no live data", () => {
     const result = evaluateTrade(makeTrade());
 
     expect(result.confidence).toBe("medium");
   });
 
+  it("returns empty live_sources when no live data", () => {
+    const result = evaluateTrade(makeTrade());
+
+    expect(result.live_sources).toEqual([]);
+  });
+
   it("returns rule_details for every rule even when not triggered", () => {
     const result = evaluateTrade(makeTrade());
 
-    // 6 rules should always appear in rule_details (5 static + 1 live-data)
-    expect(result.rule_details).toHaveLength(6);
+    // 7 rules should always appear in rule_details (5 static + 2 live-data)
+    expect(result.rule_details).toHaveLength(7);
   });
 });
 
@@ -247,7 +258,7 @@ describe("policy decision", () => {
 
     expect(result.decision).toBe("allow");
     expect(result.policy).toEqual({});
-    expect(result.policy_version).toBe("0.2.0");
+    expect(result.policy_version).toBe("0.4.0");
   });
 
   it("returns warn for caution-level trades", () => {
@@ -301,5 +312,168 @@ describe("policy decision", () => {
     expect(result.policy.recommended_slippage_bps).toBeUndefined();
     expect(result.policy.recommended_send_mode).toBeUndefined();
     expect(result.policy.recommended_priority_fee_lamports).toBeUndefined();
+  });
+
+  it("gives actionable recommendation for high price impact", () => {
+    const liveContext = {
+      jupiter: { priceImpactPct: 6.5, outAmount: "100", routeCount: 1 },
+    };
+
+    const result = evaluateTrade(makeTrade({ slippage_bps: 50 }), liveContext);
+
+    expect(result.triggered_rules).toContain("high_price_impact");
+    expect(result.recommendation).toContain("price impact");
+    expect(result.policy.recommended_slippage_bps).toBeDefined();
+  });
+
+  it("gives actionable recommendation for caution-level price impact", () => {
+    const liveContext = {
+      jupiter: { priceImpactPct: 2.5, outAmount: "100", routeCount: 1 },
+    };
+
+    const result = evaluateTrade(makeTrade({ slippage_bps: 50 }), liveContext);
+
+    expect(result.triggered_rules).toContain("high_price_impact");
+    expect(result.decision).toBe("warn");
+    expect(result.recommendation).toContain("price impact");
+  });
+});
+
+// --- Token risk (Rugcheck) ---
+
+describe("token risk rule", () => {
+  it("blocks on extreme output token risk score", () => {
+    const liveContext = {
+      rugcheck_output: {
+        score: 95,
+        risks: [{ name: "Freeze authority enabled", level: "danger", description: "Token can be frozen.", score: 40 }],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+
+    expect(result.triggered_rules).toContain("token_risk");
+    expect(result.decision).toBe("block");
+    expect(result.recommendation).toContain("risk scanner");
+    expect(result.reason).toContain("Freeze authority");
+  });
+
+  it("blocks on extreme input token risk score (sell-side)", () => {
+    const liveContext = {
+      rugcheck_input: {
+        score: 90,
+        risks: [{ name: "Rug pull detected", level: "danger", description: "Token rugged.", score: 90 }],
+      },
+      rugcheck_output: {
+        score: 5,
+        risks: [],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+
+    expect(result.triggered_rules).toContain("token_risk");
+    expect(result.decision).toBe("block");
+    expect(result.reason).toContain("Input");
+  });
+
+  it("warns on elevated token risk score", () => {
+    const liveContext = {
+      rugcheck_output: {
+        score: 55,
+        risks: [{ name: "Top holders own majority", level: "warning", description: "Concentrated ownership.", score: 20 }],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+
+    expect(result.triggered_rules).toContain("token_risk");
+    expect(result.decision).toBe("warn");
+  });
+
+  it("does not trigger on low token risk score", () => {
+    const liveContext = {
+      rugcheck_output: {
+        score: 15,
+        risks: [],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+
+    expect(result.triggered_rules).not.toContain("token_risk");
+    expect(result.decision).toBe("allow");
+  });
+
+  it("skips gracefully when no rugcheck data (fail open)", () => {
+    const result = evaluateTrade(makeTrade());
+
+    const tokenDetail = result.rule_details.find((r) => r.rule_id === "token_risk");
+    expect(tokenDetail).toBeDefined();
+    expect(tokenDetail?.triggered).toBe(false);
+    expect(tokenDetail?.message).toContain("skipped");
+  });
+
+  it("upgrades confidence to high when rugcheck data is present", () => {
+    const liveContext = {
+      rugcheck_output: { score: 10, risks: [] },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+
+    expect(result.confidence).toBe("high");
+    expect(result.live_sources).toContain("rugcheck");
+  });
+
+  it("reports live_sources correctly for jupiter", () => {
+    const liveContext = {
+      jupiter: { priceImpactPct: 0.1, outAmount: "100", routeCount: 1 },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+
+    expect(result.live_sources).toContain("jupiter");
+    expect(result.live_sources).not.toContain("rugcheck");
+  });
+
+  it("reports live_sources correctly when both providers present", () => {
+    const liveContext = {
+      jupiter: { priceImpactPct: 0.1, outAmount: "100", routeCount: 1 },
+      rugcheck_output: { score: 10, risks: [] },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+
+    expect(result.live_sources).toContain("jupiter");
+    expect(result.live_sources).toContain("rugcheck");
+  });
+
+  it("does not emit safer parameters for token risk (problem is the token, not settings)", () => {
+    const liveContext = {
+      rugcheck_output: {
+        score: 90,
+        risks: [{ name: "Rug pull detected", level: "danger", description: "Token rugged.", score: 90 }],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+
+    expect(result.decision).toBe("block");
+    // Token risk should not add parameter recommendations
+    expect(result.policy.recommended_slippage_bps).toBeUndefined();
+    expect(result.policy.recommended_send_mode).toBeUndefined();
+    expect(result.policy.recommended_priority_fee_lamports).toBeUndefined();
+  });
+
+  it("includes 7 rules in rule_details", () => {
+    const result = evaluateTrade(makeTrade());
+
+    expect(result.rule_details).toHaveLength(7);
+  });
+
+  it("reports policy version 0.4.0", () => {
+    const result = evaluateTrade(makeTrade());
+
+    expect(result.policy_version).toBe("0.4.0");
   });
 });

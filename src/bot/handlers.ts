@@ -1,14 +1,35 @@
 import type { Context } from "grammy";
-import { tradeCheckSchema } from "../schema/checkTradeSchema";
+import { z } from "zod";
 import { evaluateTrade } from "../rules/index";
 import { fetchLiveContext } from "../data/liveContext";
+import { resolveSymbolToMint, isMintAddress } from "../data/mints";
+import type { ValidatedTradeCheck } from "../schema/checkTradeSchema";
 import type { TradeCheckResult } from "../types/result";
+
+/**
+ * Bot input schema — user-friendly format with symbol pairs.
+ * The bot resolves symbols to mints before calling the policy engine.
+ */
+const botInputSchema = z.object({
+  chain: z.literal("solana", {
+    errorMap: () => ({ message: "Only 'solana' is supported." }),
+  }),
+  pair: z.string().min(3).max(100).refine(
+    (s) => s.includes("/") && s.split("/").length === 2 && s.split("/").every((p) => p.trim().length > 0),
+    "Pair must be 'INPUT/OUTPUT', e.g. 'SOL/USDC'.",
+  ),
+  amount_in: z.number().positive("amount_in must be positive."),
+  slippage_bps: z.number().int().min(0).max(10000),
+  send_mode: z.enum(["standard", "protected", "unknown"]),
+  priority_fee_lamports: z.number().int().min(0).optional(),
+  route_hint: z.string().max(200).optional(),
+  notes: z.string().max(500).optional(),
+});
 
 const EXAMPLE_JSON = `{
   "chain": "solana",
   "pair": "SOL/USDC",
   "amount_in": 10,
-  "amount_in_symbol": "SOL",
   "slippage_bps": 150,
   "send_mode": "standard"
 }`;
@@ -29,9 +50,8 @@ export async function handleHelp(ctx: Context) {
       `<pre>${escapeHtml(EXAMPLE_JSON)}</pre>\n\n` +
       "Required fields:\n" +
       "• chain — must be \"solana\"\n" +
-      "• pair — e.g. \"SOL/USDC\"\n" +
+      "• pair — e.g. \"SOL/USDC\" or \"SOL/&lt;mint-address&gt;\"\n" +
       "• amount_in — trade size\n" +
-      "• amount_in_symbol — e.g. \"SOL\"\n" +
       "• slippage_bps — slippage in basis points\n" +
       "• send_mode — \"standard\", \"protected\", or \"unknown\"\n\n" +
       "Optional: priority_fee_lamports, route_hint, notes",
@@ -56,8 +76,8 @@ export async function handleTradeMessage(ctx: Context) {
     return;
   }
 
-  // Validate with Zod schema
-  const parsed = tradeCheckSchema.safeParse(raw);
+  // Validate bot input format
+  const parsed = botInputSchema.safeParse(raw);
   if (!parsed.success) {
     const errors = parsed.error.errors.map(
       (e) => `• ${e.path.join(".")}: ${e.message}`,
@@ -68,9 +88,38 @@ export async function handleTradeMessage(ctx: Context) {
     return;
   }
 
+  // Resolve symbols to mints
+  const [inputSymbol, outputSymbol] = parsed.data.pair.split("/").map((s) => s.trim());
+  const inputMint = resolveSymbolToMint(inputSymbol);
+  const outputMint = resolveSymbolToMint(outputSymbol);
+
+  if (!inputMint) {
+    await ctx.reply(`Unknown input token: "${inputSymbol}". Use a known symbol (SOL, USDC, etc.) or a mint address.`);
+    return;
+  }
+  if (!outputMint) {
+    await ctx.reply(`Unknown output token: "${outputSymbol}". Use a known symbol (SOL, USDC, etc.) or a mint address.`);
+    return;
+  }
+
+  // Build the engine's mint-based request
+  const trade: ValidatedTradeCheck = {
+    chain: "solana",
+    input_mint: inputMint,
+    output_mint: outputMint,
+    amount_in: parsed.data.amount_in,
+    slippage_bps: parsed.data.slippage_bps,
+    send_mode: parsed.data.send_mode,
+    priority_fee_lamports: parsed.data.priority_fee_lamports,
+    input_symbol: isMintAddress(inputSymbol) ? undefined : inputSymbol.toUpperCase(),
+    output_symbol: isMintAddress(outputSymbol) ? undefined : outputSymbol.toUpperCase(),
+    route_hint: parsed.data.route_hint,
+    notes: parsed.data.notes,
+  };
+
   // Fetch live data and run rule engine
-  const liveContext = await fetchLiveContext(parsed.data);
-  const result = evaluateTrade(parsed.data, liveContext);
+  const liveContext = await fetchLiveContext(trade);
+  const result = evaluateTrade(trade, liveContext);
   await ctx.reply(formatResult(result), { parse_mode: "HTML" });
 }
 
@@ -106,10 +155,10 @@ function formatResult(r: TradeCheckResult): string {
     }
   }
 
-  const dataNote = r.confidence === "high"
-    ? "static rules + live market data"
+  const sourceNote = r.live_sources.length > 0
+    ? `static rules + ${r.live_sources.join(", ")}`
     : "static rules only, no live data";
-  msg += `\n<i>Confidence: ${r.confidence} (${dataNote}) · policy ${r.policy_version}</i>`;
+  msg += `\n<i>Confidence: ${r.confidence} (${sourceNote}) · policy ${r.policy_version}</i>`;
 
   return msg;
 }

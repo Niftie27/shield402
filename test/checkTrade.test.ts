@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app";
+import { SOL_MINT, TOKEN_MINTS } from "../src/data/mints";
 
+const USDC_MINT = TOKEN_MINTS["USDC"];
 const app = createApp();
 
 // --- Health endpoint ---
@@ -24,9 +26,9 @@ describe("POST /check-trade — valid requests", () => {
       .post("/check-trade")
       .send({
         chain: "solana",
-        pair: "SOL/USDC",
+        input_mint: SOL_MINT,
+        output_mint: USDC_MINT,
         amount_in: 2,
-        amount_in_symbol: "SOL",
         slippage_bps: 50,
         send_mode: "protected",
         priority_fee_lamports: 5000,
@@ -38,8 +40,9 @@ describe("POST /check-trade — valid requests", () => {
     expect(res.body.recommendation).toBeDefined();
     expect(res.body.confidence).toBe("medium");
     expect(res.body.triggered_rules).toEqual([]);
-    expect(res.body.rule_details).toHaveLength(6);
+    expect(res.body.rule_details).toHaveLength(7);
     expect(res.body.request_id).toBeDefined();
+    expect(res.body.live_sources).toEqual([]);
   });
 
   it("returns 200 with high risk for a dangerous trade", async () => {
@@ -47,9 +50,9 @@ describe("POST /check-trade — valid requests", () => {
       .post("/check-trade")
       .send({
         chain: "solana",
-        pair: "SOL/USDC",
+        input_mint: SOL_MINT,
+        output_mint: USDC_MINT,
         amount_in: 60,
-        amount_in_symbol: "SOL",
         slippage_bps: 500,
         send_mode: "unknown",
       });
@@ -68,9 +71,9 @@ describe("POST /check-trade — invalid requests", () => {
       .post("/check-trade")
       .send({
         chain: "ethereum",
-        pair: "ETH/USDC",
+        input_mint: SOL_MINT,
+        output_mint: USDC_MINT,
         amount_in: 5,
-        amount_in_symbol: "ETH",
         slippage_bps: 100,
         send_mode: "standard",
       });
@@ -95,9 +98,25 @@ describe("POST /check-trade — invalid requests", () => {
       .post("/check-trade")
       .send({
         chain: "solana",
-        pair: "SOL/USDC",
+        input_mint: SOL_MINT,
+        output_mint: USDC_MINT,
         amount_in: -5,
-        amount_in_symbol: "SOL",
+        slippage_bps: 100,
+        send_mode: "standard",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_request");
+  });
+
+  it("returns 400 for invalid mint address", async () => {
+    const res = await request(app)
+      .post("/check-trade")
+      .send({
+        chain: "solana",
+        input_mint: "not-a-mint",
+        output_mint: USDC_MINT,
+        amount_in: 5,
         slippage_bps: 100,
         send_mode: "standard",
       });

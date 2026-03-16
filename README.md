@@ -6,13 +6,17 @@ Available as an HTTP API (with optional x402 micropayment gating) and a Telegram
 
 ## What this does
 
-You send a proposed Solana trade configuration. Shield402 runs it through a rule engine that combines static checks with live market data from Jupiter, and returns:
+You send a proposed Solana trade configuration with **mint addresses** (not ticker symbols). Shield402 runs it through a rule engine that combines static checks with live market data from Jupiter and token risk data from Rugcheck, and returns:
 
+- a **policy decision** (allow / warn / block)
+- **safer parameters** (recommended slippage, send mode, priority fee)
 - a **risk level** (low / caution / high)
 - a **reason** explaining the risk
 - a **recommendation** for what to change
 - which **rules triggered** and why
+- which **live data sources** contributed (jupiter, rugcheck)
 - a **confidence level** (medium = static rules only, high = static + live data)
+- a **policy version** for tracking rule changes
 
 ## What this does NOT do
 
@@ -38,9 +42,9 @@ curl -X POST http://localhost:3402/check-trade \
   -H "Content-Type: application/json" \
   -d '{
     "chain": "solana",
-    "pair": "SOL/USDC",
+    "input_mint": "So11111111111111111111111111111111111111112",
+    "output_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     "amount_in": 25,
-    "amount_in_symbol": "SOL",
     "slippage_bps": 200,
     "send_mode": "standard"
   }'
@@ -51,10 +55,18 @@ Example response:
 ```json
 {
   "request_id": "req_abc123_0001",
+  "decision": "block",
+  "policy": {
+    "recommended_slippage_bps": 50,
+    "recommended_send_mode": "protected",
+    "recommended_priority_fee_lamports": 10000
+  },
+  "policy_version": "0.4.0",
   "risk_level": "high",
   "reason": "Dangerous combination: large trade (25 SOL), wide slippage (200 bps), and standard send mode. (5 risk factors detected)",
   "recommendation": "Tighten slippage, switch to protected send mode, and consider splitting the trade.",
-  "confidence": "high",
+  "confidence": "medium",
+  "live_sources": [],
   "triggered_rules": [
     "slippage_too_wide",
     "unprotected_send_mode",
@@ -66,9 +78,11 @@ Example response:
 }
 ```
 
+Optional display fields: `input_symbol`, `output_symbol`, `route_hint`, `notes`.
+
 ## Telegram bot
 
-Set `TELEGRAM_BOT_TOKEN` in `.env` and the bot starts alongside the API server. Send trade configs as JSON messages and get risk assessments back.
+Set `TELEGRAM_BOT_TOKEN` in `.env` and the bot starts alongside the API server. Send trade configs as JSON messages with symbol pairs (e.g. `"pair": "SOL/USDC"`) and the bot resolves them to mint addresses before running the rule engine.
 
 The bot calls the rule engine directly (bypasses x402 payment gating).
 
@@ -85,14 +99,17 @@ The bot calls the rule engine directly (bypasses x402 payment gating).
 **Live data rules** (active when providers are configured):
 
 6. **High price impact** — queries Jupiter for real-time price impact on the proposed swap
+7. **Token risk** — queries Rugcheck for token safety on both input and output tokens (freeze authority, ownership concentration, rug indicators)
 
 Thresholds are in `src/config/riskConfig.ts`.
 
 ## Live market data
 
-When `JUPITER_API_KEY` is set, Shield402 fetches a real-time quote from Jupiter before evaluating rules. This enables the price impact check and upgrades confidence from "medium" to "high".
+When `JUPITER_API_KEY` is set, Shield402 fetches a real-time quote from Jupiter before evaluating rules. This enables the price impact check. Jupiter receives mint addresses directly — no symbol resolution needed.
 
-If Jupiter is unavailable or times out (3s), the API falls back to static rules only. It never blocks or fails because of a provider outage.
+When `RUGCHECK_API_KEY` is set, Shield402 fetches token risk reports from Rugcheck for **both** the input and output tokens. This catches buy-side risk (acquiring a scam token) and sell-side risk (holding a token with freeze authority). The worst score between the two determines the assessment.
+
+Either live data source upgrades confidence from "medium" to "high". The `live_sources` field in the response shows exactly which providers contributed. Jupiter and Rugcheck are fetched in parallel. If any is unavailable or times out (3s), the API falls back gracefully. It never blocks or fails because of a provider outage.
 
 ## x402 payment gating
 
@@ -118,6 +135,7 @@ All configuration is via environment variables. See `.env.example` for the full 
 - `X402_PRICE` — price per call in USD
 - `TELEGRAM_BOT_TOKEN` — Telegram bot token (optional)
 - `JUPITER_API_KEY` — Jupiter API key for live price impact (optional)
+- `RUGCHECK_API_KEY` — Rugcheck API key for token risk scanning (optional)
 - `SOLANA_RPC_URL` — reserved for future live chain queries (optional)
 
 ## Testing
@@ -126,19 +144,23 @@ All configuration is via environment variables. See `.env.example` for the full 
 npm test
 ```
 
-41 tests covering rule engine, schema validation, and HTTP integration. Tests run with x402 disabled and without live data providers.
+Tests cover rule engine, schema validation, policy decisions, token risk (both input and output), live source provenance, and HTTP integration. Tests run with x402 disabled and without live data providers.
 
 ## Current status
 
-- [x] Rule engine with 5 static rules + 1 live data rule
-- [x] Zod schema validation
-- [x] Structured JSON request logging
-- [x] HTTP integration tests
+- [x] Mint-based API contract (no ambiguous symbol resolution in the engine)
+- [x] Rule engine with 5 static rules + 2 live data rules
+- [x] Both-token Rugcheck scanning (input + output)
+- [x] Live source provenance in responses and logs
+- [x] Zod schema validation with base58 mint validation
+- [x] Structured JSON request logging (decision, policy_version, live_sources)
+- [x] HTTP error boundary (structured 500 responses)
 - [x] x402 payment wrapping (Solana devnet)
-- [x] Telegram bot interface
+- [x] Telegram bot with symbol-to-mint resolution
 - [x] Jupiter live price impact integration
+- [x] Rugcheck token risk integration
+- [x] Policy layer (allow / warn / block + recommended safer parameters)
 - [ ] Buyer validation — does anyone want this enough to integrate?
-- [ ] Policy layer reframing (allow / warn / block)
 - [ ] MCP server for AI agent discovery
 - [ ] Additional live signals (liquidity, volume)
 
@@ -146,7 +168,7 @@ npm test
 
 - Solana only
 - Trusts caller-supplied `send_mode` — does not verify on-chain protection
-- Size risk rule only calibrated for SOL-denominated trades
+- Size risk rule only calibrated for SOL-denominated trades (compares against SOL mint)
 - Thresholds are static estimates, not dynamically adjusted
 - No persistent storage — logs go to stdout only
 - Not production-hardened (no rate limiting, auth, or deployment config)
