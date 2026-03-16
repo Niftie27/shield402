@@ -2,6 +2,7 @@ import { riskConfig } from "../config/riskConfig";
 import type { ValidatedTradeCheck } from "../schema/checkTradeSchema";
 import type { RuleResult } from "../types/result";
 import type { Rule } from "./rule";
+import { SOL_MINT } from "../data/mints";
 
 /**
  * Rule: Large trade with loose settings.
@@ -18,14 +19,14 @@ export const sizeRiskRule: Rule = {
   description: "Flags large trades that have wide slippage or low priority fees.",
 
   evaluate(trade: ValidatedTradeCheck): RuleResult {
-    const { amount_in, amount_in_symbol, slippage_bps, priority_fee_lamports } = trade;
+    const { amount_in, input_mint, slippage_bps, priority_fee_lamports } = trade;
     const { largeThresholdSol, veryLargeThresholdSol } = riskConfig.tradeSize;
     const { cautionAboveBps } = riskConfig.slippage;
     const { lowForLargeTrade } = riskConfig.priorityFee;
 
     // v1 heuristic: only apply size checks to SOL-denominated trades.
     // For other tokens, we'd need price data we don't have yet.
-    const isSolDenominated = amount_in_symbol === "SOL";
+    const isSolDenominated = input_mint === SOL_MINT;
     if (!isSolDenominated) {
       return {
         rule_id: this.id,

@@ -1,24 +1,23 @@
-import express from "express";
-import { handleCheckTrade } from "./routes/checkTrade";
+import dotenv from "dotenv";
+dotenv.config();
 
-const app = express();
+import { createApp } from "./app";
+import { loadX402Config } from "./config/x402Config";
+import { startBot } from "./bot/bot";
+
 const PORT = process.env.PORT || 3402;
-
-app.use(express.json());
-
-// --- Routes ---
-
-app.post("/check-trade", handleCheckTrade);
-
-// Health check
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", version: "0.1.0" });
-});
-
-// --- Start ---
+const x402 = loadX402Config();
+const app = createApp({ x402 });
 
 app.listen(PORT, () => {
   console.log(`Shield402 Lite running on port ${PORT}`);
+  if (!x402) {
+    console.log("x402 payment is disabled. Set X402_ENABLED=true in .env to enable.");
+  }
 });
 
-export default app;
+// Start Telegram bot in the background (non-blocking).
+// If TELEGRAM_BOT_TOKEN is not set, this logs a message and returns.
+startBot().catch((err) => {
+  console.error("Failed to start Telegram bot:", err.message);
+});

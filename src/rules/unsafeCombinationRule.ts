@@ -2,6 +2,7 @@ import { riskConfig } from "../config/riskConfig";
 import type { ValidatedTradeCheck } from "../schema/checkTradeSchema";
 import type { RuleResult } from "../types/result";
 import type { Rule } from "./rule";
+import { SOL_MINT } from "../data/mints";
 
 /**
  * Rule: Unsafe combination.
@@ -18,11 +19,11 @@ export const unsafeCombinationRule: Rule = {
   description: "Flags trades that combine large size, wide slippage, and unprotected send mode.",
 
   evaluate(trade: ValidatedTradeCheck): RuleResult {
-    const { amount_in, amount_in_symbol, slippage_bps, send_mode } = trade;
+    const { amount_in, input_mint, slippage_bps, send_mode } = trade;
     const { largeThresholdSol } = riskConfig.tradeSize;
     const { cautionAboveBps } = riskConfig.slippage;
 
-    const isSolDenominated = amount_in_symbol === "SOL";
+    const isSolDenominated = input_mint === SOL_MINT;
     const isLarge = isSolDenominated && amount_in >= largeThresholdSol;
     const slippageIsWide = slippage_bps > cautionAboveBps;
     const isUnprotected = send_mode !== "protected";

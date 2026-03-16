@@ -7,6 +7,25 @@
 export type RiskLevel = "low" | "caution" | "high";
 export type Confidence = "low" | "medium" | "high";
 
+/**
+ * Policy decision — what a bot or agent should do.
+ *
+ * - "allow"  = trade looks reasonable, proceed
+ * - "warn"   = trade has risks, consider adjustments
+ * - "block"  = trade is dangerous, do not send as-is
+ */
+export type PolicyDecision = "allow" | "warn" | "block";
+
+/**
+ * Concrete safer parameters the caller can use directly.
+ * Only populated when decision is "warn" or "block".
+ */
+export interface PolicyRecommendation {
+  recommended_slippage_bps?: number;
+  recommended_send_mode?: "protected";
+  recommended_priority_fee_lamports?: number;
+}
+
 export interface RuleResult {
   /** Machine-readable rule identifier, e.g. "slippage_too_wide". */
   rule_id: string;
@@ -22,6 +41,15 @@ export interface RuleResult {
 }
 
 export interface TradeCheckResult {
+  /** Policy decision: allow / warn / block. */
+  decision: PolicyDecision;
+
+  /** Concrete safer parameters when decision is warn or block. */
+  policy: PolicyRecommendation;
+
+  /** Policy engine version for tracking changes. */
+  policy_version: string;
+
   /** Overall risk assessment. */
   risk_level: RiskLevel;
 
@@ -36,6 +64,9 @@ export interface TradeCheckResult {
 
   /** Which rules fired. */
   triggered_rules: string[];
+
+  /** Which live data providers contributed to this assessment. */
+  live_sources: string[];
 
   /** Full rule-by-rule breakdown. Useful for debugging and observability. */
   rule_details: RuleResult[];
