@@ -150,6 +150,22 @@ To add Shield402 to an MCP client, point it at:
 
 The MCP server calls the rule engine directly (in-process, no HTTP). It uses the same mint-based contract and returns the same policy response as the HTTP API.
 
+## solana-agent-kit plugin
+
+Drop-in plugin for [solana-agent-kit](https://github.com/sendaifun/solana-agent-kit). Agents automatically get a `check_trade_safety` action that the LLM can call before executing swaps.
+
+```typescript
+import { SolanaAgentKit } from "solana-agent-kit";
+import { Shield402Plugin } from "@shield402/plugin-solana-agent-kit";
+
+const agent = new SolanaAgentKit(wallet, rpcUrl, config)
+  .use(Shield402Plugin);
+```
+
+The plugin calls Shield402's HTTP API and formats the response for LLM consumption. Set `SHIELD402_URL` to point to your instance (defaults to `http://localhost:3402`).
+
+See [`packages/plugin-solana-agent-kit`](packages/plugin-solana-agent-kit/) for full documentation.
+
 ## x402 payment gating
 
 Shield402 supports optional x402 micropayment gating on `POST /check-trade`. When enabled, unpaid requests receive `402 Payment Required` with payment instructions. Paid requests get the full risk assessment.
@@ -183,7 +199,7 @@ All configuration is via environment variables. See `.env.example` for the full 
 npm test
 ```
 
-Tests cover rule engine, schema validation, policy decisions, token risk (both input and output), live source provenance, and HTTP integration. Tests run with x402 disabled and without live data providers.
+Tests cover rule engine, schema validation, policy decisions, token risk (both input and output), live source provenance, HTTP integration, MCP server, and plugin round-trip. Tests run with x402 disabled and without live data providers.
 
 ## Current status
 
@@ -201,6 +217,7 @@ Tests cover rule engine, schema validation, policy decisions, token risk (both i
 - [x] Policy layer (allow / warn / block + recommended safer parameters)
 - [x] Agent integration example (HTTP API, fail-open/fail-closed)
 - [x] MCP server for AI agent discovery
+- [x] solana-agent-kit plugin
 - [ ] Buyer validation — does anyone want this enough to integrate?
 - [ ] Additional live signals (liquidity, volume)
 

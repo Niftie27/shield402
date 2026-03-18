@@ -1,0 +1,21 @@
+{
+  "name": "@shield402/plugin-solana-agent-kit",
+  "version": "0.1.0",
+  "description": "Shield402 pre-trade safety check plugin for solana-agent-kit",
+  "main": "src/index.ts",
+  "keywords": [
+    "solana",
+    "solana-agent-kit",
+    "mev-protection",
+    "trade-safety",
+    "shield402"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "solana-agent-kit": ">=2.0.0",
+    "zod": ">=3.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
