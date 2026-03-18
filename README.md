@@ -123,6 +123,33 @@ npx tsx examples/agent-pretrade-check.ts
 
 The example demonstrates all three decision paths (allow → proceed, warn → apply safer params, block → abort) and includes a configurable fail-open/fail-closed strategy via `FAIL_OPEN=true`.
 
+## MCP server
+
+Shield402 is available as an [MCP](https://modelcontextprotocol.io/) tool server. AI agents (Claude Desktop, agent frameworks, etc.) can discover and call the `check-trade` tool automatically over stdio.
+
+```bash
+npm run mcp
+```
+
+To add Shield402 to an MCP client, point it at:
+
+```json
+{
+  "mcpServers": {
+    "shield402": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp/server.ts"],
+      "env": {
+        "JUPITER_API_KEY": "your-key",
+        "RUGCHECK_API_KEY": "your-key"
+      }
+    }
+  }
+}
+```
+
+The MCP server calls the rule engine directly (in-process, no HTTP). It uses the same mint-based contract and returns the same policy response as the HTTP API.
+
 ## x402 payment gating
 
 Shield402 supports optional x402 micropayment gating on `POST /check-trade`. When enabled, unpaid requests receive `402 Payment Required` with payment instructions. Paid requests get the full risk assessment.
@@ -173,8 +200,8 @@ Tests cover rule engine, schema validation, policy decisions, token risk (both i
 - [x] Rugcheck token risk integration
 - [x] Policy layer (allow / warn / block + recommended safer parameters)
 - [x] Agent integration example (HTTP API, fail-open/fail-closed)
+- [x] MCP server for AI agent discovery
 - [ ] Buyer validation — does anyone want this enough to integrate?
-- [ ] MCP server for AI agent discovery
 - [ ] Additional live signals (liquidity, volume)
 
 ## Known limitations
