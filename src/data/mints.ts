@@ -4,9 +4,11 @@
  * The policy engine works with mint addresses directly.
  * This module provides:
  * - A symbol→mint map (used by the Telegram bot for user-friendly input)
- * - Decimal resolution by mint (used by Jupiter for atomic unit conversion)
+ * - Decimal resolution by mint (hardcoded for well-known tokens, on-chain for the rest)
  * - Base58 validation
  */
+
+import { fetchMintDecimals } from "./solana";
 
 /** Well-known Solana mint address for SOL/WSOL. */
 export const SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -52,6 +54,20 @@ export function hasKnownDecimals(mint: string): boolean {
 
 export function getTokenDecimals(mint: string): number {
   return KNOWN_DECIMALS[mint] ?? 6;
+}
+
+/**
+ * Resolve decimals for any SPL token.
+ *
+ * Checks the hardcoded map first (instant), then falls back to
+ * an on-chain RPC call to read the mint account's decimals byte.
+ *
+ * Returns null if decimals can't be determined (no RPC URL, timeout, etc.).
+ * Caller should skip Jupiter rather than guess.
+ */
+export async function resolveDecimals(mint: string): Promise<number | null> {
+  if (mint in KNOWN_DECIMALS) return KNOWN_DECIMALS[mint];
+  return fetchMintDecimals(mint);
 }
 
 /**

@@ -1,12 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   isMintAddress,
   getTokenDecimals,
+  resolveDecimals,
   parsePairSymbols,
   resolveSymbolToMint,
   TOKEN_MINTS,
   SOL_MINT,
 } from "../src/data/mints";
+import { clearDecimalsCache } from "../src/data/solana";
 
 describe("isMintAddress", () => {
   it("recognizes a valid Solana mint address", () => {
@@ -85,5 +87,81 @@ describe("parsePairSymbols", () => {
 
   it("returns null for too many separators", () => {
     expect(parsePairSymbols("SOL/USDC/BONK")).toBeNull();
+  });
+});
+
+describe("resolveDecimals", () => {
+  afterEach(() => {
+    clearDecimalsCache();
+    vi.restoreAllMocks();
+  });
+
+  it("returns hardcoded decimals for SOL without RPC call", async () => {
+    const result = await resolveDecimals(SOL_MINT);
+    expect(result).toBe(9);
+  });
+
+  it("returns hardcoded decimals for USDC without RPC call", async () => {
+    const result = await resolveDecimals(TOKEN_MINTS["USDC"]);
+    expect(result).toBe(6);
+  });
+
+  it("returns null for unknown mint when SOLANA_RPC_URL is not set", async () => {
+    delete process.env.SOLANA_RPC_URL;
+    const result = await resolveDecimals("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
+    expect(result).toBeNull();
+  });
+
+  it("fetches decimals on-chain for unknown mint", async () => {
+    // Build a fake 82-byte SPL Token Mint account with decimals = 5
+    const mintData = Buffer.alloc(82);
+    mintData[44] = 5; // decimals byte
+    mintData[45] = 1; // is_initialized
+    const base64Data = mintData.toString("base64");
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        result: { value: { data: [base64Data, "base64"] } },
+      }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+    process.env.SOLANA_RPC_URL = "https://fake-rpc.example.com";
+
+    const result = await resolveDecimals("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
+    expect(result).toBe(5);
+    expect(mockFetch).toHaveBeenCalledOnce();
+
+    // Second call should use cache, not RPC
+    const cached = await resolveDecimals("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
+    expect(cached).toBe(5);
+    expect(mockFetch).toHaveBeenCalledOnce(); // still 1 call
+
+    delete process.env.SOLANA_RPC_URL;
+  });
+
+  it("returns null when RPC returns no account data", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ result: { value: null } }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+    process.env.SOLANA_RPC_URL = "https://fake-rpc.example.com";
+
+    const result = await resolveDecimals("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
+    expect(result).toBeNull();
+
+    delete process.env.SOLANA_RPC_URL;
+  });
+
+  it("returns null when RPC call fails", async () => {
+    const mockFetch = vi.fn().mockRejectedValue(new Error("network error"));
+    vi.stubGlobal("fetch", mockFetch);
+    process.env.SOLANA_RPC_URL = "https://fake-rpc.example.com";
+
+    const result = await resolveDecimals("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
+    expect(result).toBeNull();
+
+    delete process.env.SOLANA_RPC_URL;
   });
 });
