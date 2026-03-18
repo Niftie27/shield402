@@ -191,7 +191,23 @@ All configuration is via environment variables. See `.env.example` for the full 
 - `TELEGRAM_BOT_TOKEN` — Telegram bot token (optional)
 - `JUPITER_API_KEY` — Jupiter API key for live price impact (optional)
 - `RUGCHECK_API_KEY` — Rugcheck API key for token risk scanning (optional)
-- `SOLANA_RPC_URL` — reserved for future live chain queries (optional)
+- `SOLANA_RPC_URL` — Solana RPC for on-chain decimal resolution (optional, defaults to public mainnet)
+- `API_KEYS` — comma-separated API keys for `/check-trade` auth (optional, disabled when unset)
+
+## Deploy
+
+Shield402 ships with a Dockerfile. Any platform that builds from a Dockerfile works (Railway, Fly, Render, etc.).
+
+```bash
+docker build -t shield402 .
+docker run -p 3402:3402 \
+  -e JUPITER_API_KEY=your-key \
+  -e SOLANA_RPC_URL=https://api.mainnet-beta.solana.com \
+  -e API_KEYS=your-secret-key \
+  shield402
+```
+
+On Railway: connect your GitHub repo, set env vars in the dashboard, deploy. It reads the Dockerfile automatically.
 
 ## Testing
 
@@ -218,6 +234,9 @@ Tests cover rule engine, schema validation, policy decisions, token risk (both i
 - [x] Agent integration example (HTTP API, fail-open/fail-closed)
 - [x] MCP server for AI agent discovery
 - [x] solana-agent-kit plugin
+- [x] On-chain decimal resolution (Jupiter works for any SPL token)
+- [x] API key auth + rate limiting
+- [x] Docker deployment
 - [ ] Buyer validation — does anyone want this enough to integrate?
 - [ ] Additional live signals (liquidity, volume)
 
@@ -228,7 +247,6 @@ Tests cover rule engine, schema validation, policy decisions, token risk (both i
 - Size risk rule only calibrated for SOL-denominated trades (compares against SOL mint)
 - Thresholds are static estimates, not dynamically adjusted
 - No persistent storage — logs go to stdout only
-- Not production-hardened (no rate limiting, auth, or deployment config)
 
 ## License
 
