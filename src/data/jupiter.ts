@@ -1,5 +1,5 @@
 import type { ValidatedTradeCheck } from "../schema/checkTradeSchema";
-import { getTokenDecimals, hasKnownDecimals } from "./mints";
+import { resolveDecimals } from "./mints";
 
 export interface JupiterQuoteResult {
   /** Price impact as a percentage, e.g. 0.12 means 0.12% */
@@ -31,11 +31,11 @@ export async function fetchJupiterQuote(
   const apiKey = process.env.JUPITER_API_KEY;
   if (!apiKey) return null;
 
-  // Skip Jupiter if we don't know the input token's decimals.
-  // Guessing would produce a wrong atomic amount → distorted price impact.
-  if (!hasKnownDecimals(trade.input_mint)) return null;
+  // Resolve decimals: hardcoded for well-known tokens, on-chain for the rest.
+  // If we can't determine decimals, skip Jupiter rather than guess.
+  const decimals = await resolveDecimals(trade.input_mint);
+  if (decimals === null) return null;
 
-  const decimals = getTokenDecimals(trade.input_mint);
   const atomicAmount = Math.round(trade.amount_in * 10 ** decimals);
 
   const url = new URL(JUPITER_QUOTE_URL);

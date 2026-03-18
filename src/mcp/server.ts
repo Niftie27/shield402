@@ -77,38 +77,46 @@ server.registerTool(
     },
   },
   async (args) => {
-    // Validate mint addresses
-    if (!isMintAddress(args.input_mint)) {
+    try {
+      // Validate mint addresses
+      if (!isMintAddress(args.input_mint)) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "invalid_request", message: "input_mint is not a valid Solana base58 address." }) }],
+          isError: true,
+        };
+      }
+      if (!isMintAddress(args.output_mint)) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "invalid_request", message: "output_mint is not a valid Solana base58 address." }) }],
+          isError: true,
+        };
+      }
+
+      const trade: ValidatedTradeCheck = {
+        chain: "solana",
+        input_mint: args.input_mint,
+        output_mint: args.output_mint,
+        amount_in: args.amount_in,
+        slippage_bps: args.slippage_bps,
+        send_mode: args.send_mode,
+        priority_fee_lamports: args.priority_fee_lamports,
+        input_symbol: args.input_symbol,
+        output_symbol: args.output_symbol,
+      };
+
+      const liveContext = await fetchLiveContext(trade);
+      const result = evaluateTrade(trade, liveContext);
+
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "invalid_request", message: "input_mint is not a valid Solana base58 address." }) }],
+        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err) {
+      console.error("MCP tool handler error:", err);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "internal_error", message: "An unexpected error occurred during trade evaluation." }) }],
         isError: true,
       };
     }
-    if (!isMintAddress(args.output_mint)) {
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "invalid_request", message: "output_mint is not a valid Solana base58 address." }) }],
-        isError: true,
-      };
-    }
-
-    const trade: ValidatedTradeCheck = {
-      chain: "solana",
-      input_mint: args.input_mint,
-      output_mint: args.output_mint,
-      amount_in: args.amount_in,
-      slippage_bps: args.slippage_bps,
-      send_mode: args.send_mode,
-      priority_fee_lamports: args.priority_fee_lamports,
-      input_symbol: args.input_symbol,
-      output_symbol: args.output_symbol,
-    };
-
-    const liveContext = await fetchLiveContext(trade);
-    const result = evaluateTrade(trade, liveContext);
-
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
-    };
   },
 );
 

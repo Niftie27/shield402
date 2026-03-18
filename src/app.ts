@@ -1,10 +1,14 @@
 import express from "express";
 import { handleCheckTrade } from "./routes/checkTrade";
+import { apiKeyAuth } from "./middleware/apiKey";
+import { createRateLimiter } from "./middleware/rateLimit";
 import type { X402Config } from "./config/x402Config";
 
 export interface AppOptions {
   /** When provided, wraps POST /check-trade with x402 payment middleware. */
   x402?: X402Config | null;
+  /** Disable rate limiting (for tests). */
+  disableRateLimit?: boolean;
 }
 
 /**
@@ -20,6 +24,15 @@ export function createApp(options: AppOptions = {}) {
   const app = express();
 
   app.use(express.json());
+
+  // --- API key auth + rate limiting (on /check-trade only) ---
+  // Runs before x402 so unauthorized requests are rejected before payment.
+  // When API_KEYS is unset, auth is disabled and all requests pass through.
+  if (options.disableRateLimit) {
+    app.use("/check-trade", apiKeyAuth);
+  } else {
+    app.use("/check-trade", apiKeyAuth, createRateLimiter());
+  }
 
   // --- x402 payment middleware (conditional) ---
 

@@ -29,7 +29,7 @@ let checkTradeSafety: (params: {
 
 beforeAll(async () => {
   // Start Shield402 on a random port
-  const app = createApp();
+  const app = createApp({ disableRateLimit: true });
   server = app.listen(0);
   const port = (server.address() as AddressInfo).port;
   baseUrl = `http://127.0.0.1:${port}`;

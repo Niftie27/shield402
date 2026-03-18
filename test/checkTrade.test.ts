@@ -4,7 +4,7 @@ import { createApp } from "../src/app";
 import { SOL_MINT, TOKEN_MINTS } from "../src/data/mints";
 
 const USDC_MINT = TOKEN_MINTS["USDC"];
-const app = createApp();
+const app = createApp({ disableRateLimit: true });
 
 // --- Health endpoint ---
 

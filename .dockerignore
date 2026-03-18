@@ -1,0 +1,9 @@
+node_modules
+dist
+test
+examples
+packages
+.env
+.git
+*.md
+*.code-workspace
