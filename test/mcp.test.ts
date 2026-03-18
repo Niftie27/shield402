@@ -59,7 +59,8 @@ async function waitForResponse(id: number, timeoutMs = 5000): Promise<Record<str
 beforeAll(async () => {
   proc = spawn("npx", ["tsx", "src/mcp/server.ts"], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, JUPITER_API_KEY: "", RUGCHECK_API_KEY: "" },
+    // Empty string is falsy — disables live data fetching and RPC calls in child process
+    env: { ...process.env, JUPITER_API_KEY: "", RUGCHECK_API_KEY: "", SOLANA_RPC_URL: "" },
   });
 
   proc.stdout!.on("data", (data: Buffer) => {
