@@ -111,6 +111,18 @@ When `RUGCHECK_API_KEY` is set, Shield402 fetches token risk reports from Rugche
 
 Either live data source upgrades confidence from "medium" to "high". The `live_sources` field in the response shows exactly which providers contributed. Jupiter and Rugcheck are fetched in parallel. If any is unavailable or times out (3s), the API falls back gracefully. It never blocks or fails because of a provider outage.
 
+## Agent integration
+
+See [`examples/agent-pretrade-check.ts`](examples/agent-pretrade-check.ts) for a working example of how a Solana trading agent would integrate Shield402 as a pre-trade safety layer.
+
+```bash
+# Start the server, then run the example:
+npm run dev &
+npx tsx examples/agent-pretrade-check.ts
+```
+
+The example demonstrates all three decision paths (allow → proceed, warn → apply safer params, block → abort) and includes a configurable fail-open/fail-closed strategy via `FAIL_OPEN=true`.
+
 ## x402 payment gating
 
 Shield402 supports optional x402 micropayment gating on `POST /check-trade`. When enabled, unpaid requests receive `402 Payment Required` with payment instructions. Paid requests get the full risk assessment.
@@ -160,6 +172,7 @@ Tests cover rule engine, schema validation, policy decisions, token risk (both i
 - [x] Jupiter live price impact integration
 - [x] Rugcheck token risk integration
 - [x] Policy layer (allow / warn / block + recommended safer parameters)
+- [x] Agent integration example (HTTP API, fail-open/fail-closed)
 - [ ] Buyer validation — does anyone want this enough to integrate?
 - [ ] MCP server for AI agent discovery
 - [ ] Additional live signals (liquidity, volume)
