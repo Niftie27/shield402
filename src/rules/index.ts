@@ -16,7 +16,8 @@ import { sizeRiskRule } from "./sizeRiskRule";
 import { missingFieldsRule } from "./missingFieldsRule";
 import { unsafeCombinationRule } from "./unsafeCombinationRule";
 import { priceImpactRule } from "./priceImpactRule";
-import { tokenRiskRule } from "./tokenRiskRule";
+import { tokenSafetyRule } from "./tokenSafetyRule";
+import { liquidityDepthRule } from "./liquidityDepthRule";
 
 /**
  * All active rules, in evaluation order.
@@ -30,7 +31,8 @@ const allRules: Rule[] = [
   missingFieldsRule,
   unsafeCombinationRule,
   priceImpactRule,
-  tokenRiskRule,
+  tokenSafetyRule,
+  liquidityDepthRule,
 ];
 
 /**
@@ -119,8 +121,11 @@ function pickRecommendation(
     case "high_price_impact":
       return "Reduce trade size or split into smaller trades to lower price impact.";
 
-    case "token_risk":
-      return "Token flagged by risk scanner. Review token safety before trading.";
+    case "token_safety":
+      return "Token flagged by safety analysis. Review token safety before trading.";
+
+    case "low_liquidity":
+      return "Token has insufficient liquidity for this trade size. Reduce amount or avoid.";
 
     default:
       return "Review trade parameters before sending.";
@@ -136,7 +141,12 @@ function pickRecommendation(
  * This is honest — we tell callers when we have real data vs heuristics.
  */
 function determineConfidence(liveContext?: LiveContext): Confidence {
-  if (liveContext?.jupiter || liveContext?.rugcheck_input || liveContext?.rugcheck_output) return "high";
+  if (
+    liveContext?.jupiter ||
+    liveContext?.rugcheck_input || liveContext?.rugcheck_output ||
+    liveContext?.jupiter_shield_input || liveContext?.jupiter_shield_output ||
+    liveContext?.jupiter_token_input || liveContext?.jupiter_token_output
+  ) return "high";
   return "medium";
 }
 
@@ -146,6 +156,8 @@ function determineConfidence(liveContext?: LiveContext): Confidence {
 function determineLiveSources(liveContext?: LiveContext): string[] {
   const sources: string[] = [];
   if (liveContext?.jupiter) sources.push("jupiter");
+  if (liveContext?.jupiter_shield_input || liveContext?.jupiter_shield_output) sources.push("jupiter-shield");
+  if (liveContext?.jupiter_token_input || liveContext?.jupiter_token_output) sources.push("jupiter-tokens");
   if (liveContext?.rugcheck_input || liveContext?.rugcheck_output) sources.push("rugcheck");
   return sources;
 }
@@ -209,7 +221,7 @@ function buildPolicyRecommendation(
 }
 
 /** Current policy engine version. Bump when rules or decision logic change. */
-const POLICY_VERSION = "0.4.0";
+const POLICY_VERSION = "0.5.0";
 
 /**
  * Run all rules against a validated trade and return the full result.

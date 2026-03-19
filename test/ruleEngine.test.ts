@@ -245,8 +245,8 @@ describe("result aggregation", () => {
   it("returns rule_details for every rule even when not triggered", () => {
     const result = evaluateTrade(makeTrade());
 
-    // 7 rules should always appear in rule_details (5 static + 2 live-data)
-    expect(result.rule_details).toHaveLength(7);
+    // 8 rules should always appear in rule_details (5 static + 3 live-data)
+    expect(result.rule_details).toHaveLength(8);
   });
 });
 
@@ -258,7 +258,7 @@ describe("policy decision", () => {
 
     expect(result.decision).toBe("allow");
     expect(result.policy).toEqual({});
-    expect(result.policy_version).toBe("0.4.0");
+    expect(result.policy_version).toBe("0.5.0");
   });
 
   it("returns warn for caution-level trades", () => {
@@ -352,10 +352,10 @@ describe("token risk rule", () => {
 
     const result = evaluateTrade(makeTrade(), liveContext);
 
-    expect(result.triggered_rules).toContain("token_risk");
+    expect(result.triggered_rules).toContain("token_safety");
     expect(result.decision).toBe("block");
-    expect(result.recommendation).toContain("risk scanner");
-    expect(result.reason).toContain("Freeze authority");
+    expect(result.recommendation).toContain("safety");
+    expect(result.reason).toContain("Rugcheck risk score");
   });
 
   it("blocks on extreme input token risk score (sell-side)", () => {
@@ -372,7 +372,7 @@ describe("token risk rule", () => {
 
     const result = evaluateTrade(makeTrade(), liveContext);
 
-    expect(result.triggered_rules).toContain("token_risk");
+    expect(result.triggered_rules).toContain("token_safety");
     expect(result.decision).toBe("block");
     expect(result.reason).toContain("Input");
   });
@@ -387,7 +387,7 @@ describe("token risk rule", () => {
 
     const result = evaluateTrade(makeTrade(), liveContext);
 
-    expect(result.triggered_rules).toContain("token_risk");
+    expect(result.triggered_rules).toContain("token_safety");
     expect(result.decision).toBe("warn");
   });
 
@@ -401,14 +401,14 @@ describe("token risk rule", () => {
 
     const result = evaluateTrade(makeTrade(), liveContext);
 
-    expect(result.triggered_rules).not.toContain("token_risk");
+    expect(result.triggered_rules).not.toContain("token_safety");
     expect(result.decision).toBe("allow");
   });
 
   it("skips gracefully when no rugcheck data (fail open)", () => {
     const result = evaluateTrade(makeTrade());
 
-    const tokenDetail = result.rule_details.find((r) => r.rule_id === "token_risk");
+    const tokenDetail = result.rule_details.find((r) => r.rule_id === "token_safety");
     expect(tokenDetail).toBeDefined();
     expect(tokenDetail?.triggered).toBe(false);
     expect(tokenDetail?.message).toContain("skipped");
@@ -468,12 +468,12 @@ describe("token risk rule", () => {
   it("includes 7 rules in rule_details", () => {
     const result = evaluateTrade(makeTrade());
 
-    expect(result.rule_details).toHaveLength(7);
+    expect(result.rule_details).toHaveLength(8);
   });
 
-  it("reports policy version 0.4.0", () => {
+  it("reports policy version 0.5.0", () => {
     const result = evaluateTrade(makeTrade());
 
-    expect(result.policy_version).toBe("0.4.0");
+    expect(result.policy_version).toBe("0.5.0");
   });
 });
