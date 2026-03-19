@@ -1,4 +1,5 @@
 import express from "express";
+import path from "path";
 import { handleCheckTrade } from "./routes/checkTrade";
 import { apiKeyAuth } from "./middleware/apiKey";
 import { createRateLimiter } from "./middleware/rateLimit";
@@ -84,6 +85,9 @@ export function createApp(options: AppOptions = {}) {
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", version: "0.1.0" });
   });
+
+  // --- Static UI ---
+  app.use(express.static(path.join(__dirname, "public")));
 
   return app;
 }

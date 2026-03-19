@@ -4,7 +4,7 @@
   "description": "Pre-trade safety API for Solana. Checks a proposed trade and returns a risk label, reason, and recommendation.",
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp -r src/public dist/public",
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
     "mcp": "tsx src/mcp/server.ts",

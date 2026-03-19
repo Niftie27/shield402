@@ -40,7 +40,7 @@ describe("POST /check-trade — valid requests", () => {
     expect(res.body.recommendation).toBeDefined();
     expect(res.body.confidence).toBe("medium");
     expect(res.body.triggered_rules).toEqual([]);
-    expect(res.body.rule_details).toHaveLength(7);
+    expect(res.body.rule_details).toHaveLength(8);
     expect(res.body.request_id).toBeDefined();
     expect(res.body.live_sources).toEqual([]);
   });

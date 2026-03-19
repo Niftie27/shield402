@@ -72,7 +72,7 @@ describe("Shield402 plugin (HTTP round-trip)", () => {
 
     expect(result.decision).toBe("allow");
     expect(result.risk_level).toBe("low");
-    expect(result.policy_version).toBe("0.4.0");
+    expect(result.policy_version).toBe("0.5.0");
   });
 
   it("returns block for a dangerous trade", async () => {
@@ -104,7 +104,7 @@ describe("Shield402 plugin (HTTP round-trip)", () => {
     expect(policy.recommended_slippage_bps).toBeDefined();
   });
 
-  it("returns 7 rule details", async () => {
+  it("returns 8 rule details", async () => {
     const result = await checkTradeSafety({
       input_mint: SOL_MINT,
       output_mint: USDC_MINT,
@@ -113,7 +113,7 @@ describe("Shield402 plugin (HTTP round-trip)", () => {
       send_mode: "protected",
     });
 
-    expect((result.rule_details as unknown[]).length).toBe(7);
+    expect((result.rule_details as unknown[]).length).toBe(8);
   });
 
   it("rejects invalid mint addresses", async () => {

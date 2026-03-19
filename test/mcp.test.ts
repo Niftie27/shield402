@@ -99,7 +99,7 @@ describe("MCP server", () => {
     const serverInfo = result.serverInfo as Record<string, unknown>;
 
     expect(serverInfo.name).toBe("shield402");
-    expect(serverInfo.version).toBe("0.4.0");
+    expect(serverInfo.version).toBe("0.5.0");
   });
 
   it("lists check-trade tool", async () => {
@@ -148,7 +148,7 @@ describe("MCP server", () => {
 
     expect(body.decision).toBe("allow");
     expect(body.risk_level).toBe("low");
-    expect(body.policy_version).toBe("0.4.0");
+    expect(body.policy_version).toBe("0.5.0");
     expect(body.live_sources).toEqual([]);
   });
 
@@ -212,6 +212,6 @@ describe("MCP server", () => {
     const content = result.content as Array<Record<string, unknown>>;
     const body = JSON.parse(content[0].text as string);
 
-    expect(body.rule_details).toHaveLength(7);
+    expect(body.rule_details).toHaveLength(8);
   });
 });
