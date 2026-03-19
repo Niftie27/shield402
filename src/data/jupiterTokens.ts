@@ -41,8 +41,9 @@ const TOKENS_TIMEOUT_MS = 3000;
 /**
  * Fetch token metadata from Jupiter Tokens V2 API.
  *
- * Searches by mint address. Returns the first matching result.
- * Returns null if the API key is unset, the call fails, or no match found.
+ * Searches by mint address. Verifies the exact mint matches before
+ * returning — the search endpoint may return fuzzy results.
+ * Returns null if the API key is unset, the call fails, or no exact match found.
  */
 export async function fetchJupiterToken(
   mint: string,
@@ -67,7 +68,10 @@ export async function fetchJupiterToken(
 
     if (!Array.isArray(data) || data.length === 0) return null;
 
-    const token = data[0];
+    // Find the exact mint match — don't trust search ordering.
+    // Tokens V2 uses "id" as the mint field name (may also appear as "address" or "mint").
+    const token = data.find((t) => t.id === mint || t.address === mint || t.mint === mint);
+    if (!token) return null;
 
     return {
       mint,

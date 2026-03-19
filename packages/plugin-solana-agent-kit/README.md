@@ -2,17 +2,16 @@
 
 Pre-trade safety check plugin for [solana-agent-kit](https://github.com/sendaifun/solana-agent-kit). AI agents using solana-agent-kit automatically get Shield402 pre-trade safety checks before executing swaps.
 
-## Install
+## Status
 
-```bash
-npm install @shield402/plugin-solana-agent-kit
-```
+This plugin is **not yet published to npm**. The source is TypeScript (`src/index.ts`) with no build step — it works when consumed via bundlers that handle `.ts` files (tsx, tsup, etc.) but is not yet packaged for `require()`/`import()`. A proper build step and `types` field will be added before publishing.
 
-## Usage
+## Local usage
+
+From a project in the same workspace or monorepo:
 
 ```typescript
-import { SolanaAgentKit } from "solana-agent-kit";
-import { Shield402Plugin } from "@shield402/plugin-solana-agent-kit";
+import { Shield402Plugin } from "../path/to/packages/plugin-solana-agent-kit/src";
 
 const agent = new SolanaAgentKit(wallet, rpcUrl, config)
   .use(Shield402Plugin);
@@ -44,6 +43,8 @@ Parameters:
 
 ## Example response
 
+Subset of fields — the plugin formats the full Shield402 response for LLM readability:
+
 ```json
 {
   "decision": "warn",
@@ -52,13 +53,13 @@ Parameters:
   "recommendation": "Reduce slippage to 75 bps or lower.",
   "confidence": "high",
   "recommended_slippage_bps": 75,
-  "live_sources": ["jupiter", "rugcheck"]
+  "live_sources": ["jupiter", "jupiter-shield", "jupiter-tokens", "rugcheck"]
 }
 ```
 
 ## How it works
 
-The plugin calls Shield402's HTTP API (`POST /check-trade`) with the proposed trade parameters. Shield402 runs it through 7 rules (5 static + 2 live data) and returns a policy decision.
+The plugin calls Shield402's HTTP API (`POST /check-trade`) with the proposed trade parameters. Shield402 runs it through 8 rules (5 static + 3 live data) and returns a policy decision.
 
 The agent can then:
 - **allow** → proceed with the swap
@@ -70,3 +71,4 @@ The agent can then:
 - Shield402 running (locally or deployed)
 - `solana-agent-kit` v2+
 - `zod` v3+
+

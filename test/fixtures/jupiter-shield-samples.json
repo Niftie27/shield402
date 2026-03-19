@@ -1,0 +1,31 @@
+{
+  "_note": "Real Jupiter Shield API responses captured 2026-03-19. Used to verify our client parses the response shape correctly.",
+  "_endpoint": "GET https://api.jup.ag/ultra/v1/shield?mints=<comma-separated>",
+
+  "clean_tokens": {
+    "_query": "mints=So11111111111111111111111111111111111111112,DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+    "_description": "SOL + BONK — both clean, empty warning arrays",
+    "response": {
+      "warnings": {
+        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": [],
+        "So11111111111111111111111111111111111111112": []
+      }
+    }
+  },
+
+  "risky_token": {
+    "_query": "mints=HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC",
+    "_description": "Pump.fun token with HAS_MINT_AUTHORITY warning. Note: Jupiter classifies this as severity 'info'; our tokenSafetyRule treats it as WARN tier (intentional).",
+    "response": {
+      "warnings": {
+        "HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC": [
+          {
+            "type": "HAS_MINT_AUTHORITY",
+            "message": "The authority's owner has the ability to mint more tokens",
+            "severity": "info"
+          }
+        ]
+      }
+    }
+  }
+}

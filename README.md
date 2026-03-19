@@ -6,7 +6,7 @@ Available as an HTTP API (with optional x402 micropayment gating) and a Telegram
 
 ## What this does
 
-You send a proposed Solana trade configuration with **mint addresses** (not ticker symbols). Shield402 runs it through a rule engine that combines static checks with live market data from Jupiter and token risk data from Rugcheck, and returns:
+You send a proposed Solana trade configuration with **mint addresses** (not ticker symbols). Shield402 runs it through a rule engine that combines static checks with live market data from Jupiter (quotes, Shield warnings, Tokens V2 metadata) and Rugcheck, and returns:
 
 - a **policy decision** (allow / warn / block)
 - **safer parameters** (recommended slippage, send mode, priority fee)
@@ -14,7 +14,7 @@ You send a proposed Solana trade configuration with **mint addresses** (not tick
 - a **reason** explaining the risk
 - a **recommendation** for what to change
 - which **rules triggered** and why
-- which **live data sources** contributed (jupiter, rugcheck)
+- which **live data sources** contributed (jupiter, jupiter-shield, jupiter-tokens, rugcheck)
 - a **confidence level** (medium = static rules only, high = static + live data)
 - a **policy version** for tracking rule changes
 
@@ -54,14 +54,13 @@ Example response:
 
 ```json
 {
-  "request_id": "req_abc123_0001",
   "decision": "block",
   "policy": {
     "recommended_slippage_bps": 50,
     "recommended_send_mode": "protected",
     "recommended_priority_fee_lamports": 10000
   },
-  "policy_version": "0.4.0",
+  "policy_version": "0.5.0",
   "risk_level": "high",
   "reason": "Dangerous combination: large trade (25 SOL), wide slippage (200 bps), and standard send mode. (5 risk factors detected)",
   "recommendation": "Tighten slippage, switch to protected send mode, and consider splitting the trade.",
@@ -92,24 +91,27 @@ The bot calls the rule engine directly (bypasses x402 payment gating).
 
 1. **Slippage too wide** — flags slippage above configurable thresholds
 2. **Unprotected send mode** — flags standard or unknown send modes
-3. **Large trade + loose settings** — flags big trades with wide slippage or low priority fees
+3. **Large trade + loose settings** — flags big SOL trades with wide slippage or low priority fees
 4. **Missing execution params** — flags omitted priority fee
 5. **Unsafe combination** — escalates when multiple risk factors combine
 
 **Live data rules** (active when providers are configured):
 
 6. **High price impact** — queries Jupiter for real-time price impact on the proposed swap
-7. **Token risk** — queries Rugcheck for token safety on both input and output tokens (freeze authority, ownership concentration, rug indicators)
-
-Thresholds are in `src/config/riskConfig.ts`.
+7. **Token safety** — combines Jupiter Shield (16 structured warnings), Rugcheck (risk scores), and Jupiter Tokens V2 (verification, organic score, audit data) into a single verdict. Severity is type-based: honeypot/non-transferable → block, mint/freeze authority → warn, informational → noted only.
+8. **Liquidity depth** — flags tokens with dangerously low total liquidity or high price impact in thin markets. Uses absolute liquidity floors ($1K block, $10K warn) and price impact cross-checks.
 
 ## Live market data
 
-When `JUPITER_API_KEY` is set, Shield402 fetches a real-time quote from Jupiter before evaluating rules. This enables the price impact check. Jupiter receives mint addresses directly — no symbol resolution needed.
+When `JUPITER_API_KEY` is set, Shield402 fetches live data from three Jupiter endpoints in parallel:
 
-When `RUGCHECK_API_KEY` is set, Shield402 fetches token risk reports from Rugcheck for **both** the input and output tokens. This catches buy-side risk (acquiring a scam token) and sell-side risk (holding a token with freeze authority). The worst score between the two determines the assessment.
+- **Jupiter quotes** — real-time price impact for the proposed swap
+- **Jupiter Shield** — 16 structured token warnings (honeypot, mint/freeze authority, permanent delegate, etc.) for both input and output tokens
+- **Jupiter Tokens V2** — token metadata including liquidity depth, organic activity score, verification status, and audit data (bot holders, dev balance, etc.)
 
-Either live data source upgrades confidence from "medium" to "high". The `live_sources` field in the response shows exactly which providers contributed. Jupiter and Rugcheck are fetched in parallel. If any is unavailable or times out (3s), the API falls back gracefully. It never blocks or fails because of a provider outage.
+When `RUGCHECK_API_KEY` is set, Shield402 fetches token risk reports from Rugcheck for **both** the input and output tokens. This catches buy-side risk (acquiring a scam token) and sell-side risk (holding a token with freeze authority).
+
+All four data sources are fetched in parallel. Any live data source upgrades confidence from "medium" to "high". The `live_sources` field shows exactly which providers contributed (`jupiter`, `jupiter-shield`, `jupiter-tokens`, `rugcheck`). If any provider is unavailable or times out (3s), the API falls back gracefully — it never blocks or fails because of a provider outage.
 
 ## Agent integration
 
@@ -152,19 +154,11 @@ The MCP server calls the rule engine directly (in-process, no HTTP). It uses the
 
 ## solana-agent-kit plugin
 
-Drop-in plugin for [solana-agent-kit](https://github.com/sendaifun/solana-agent-kit). Agents automatically get a `check_trade_safety` action that the LLM can call before executing swaps.
+Plugin for [solana-agent-kit](https://github.com/sendaifun/solana-agent-kit). Agents get a `check_trade_safety` action that the LLM can call before executing swaps.
 
-```typescript
-import { SolanaAgentKit } from "solana-agent-kit";
-import { Shield402Plugin } from "@shield402/plugin-solana-agent-kit";
-
-const agent = new SolanaAgentKit(wallet, rpcUrl, config)
-  .use(Shield402Plugin);
-```
+**Not yet published to npm.** Currently usable via local/workspace import only. See [`packages/plugin-solana-agent-kit`](packages/plugin-solana-agent-kit/) for setup and status.
 
 The plugin calls Shield402's HTTP API and formats the response for LLM consumption. Set `SHIELD402_URL` to point to your instance (defaults to `http://localhost:3402`).
-
-See [`packages/plugin-solana-agent-kit`](packages/plugin-solana-agent-kit/) for full documentation.
 
 ## x402 payment gating
 
@@ -220,8 +214,11 @@ Tests cover rule engine, schema validation, policy decisions, token risk (both i
 ## Current status
 
 - [x] Mint-based API contract (no ambiguous symbol resolution in the engine)
-- [x] Rule engine with 5 static rules + 2 live data rules
-- [x] Both-token Rugcheck scanning (input + output)
+- [x] Rule engine with 5 static rules + 3 live data rules (8 total)
+- [x] Jupiter Shield integration (16 structured token warnings)
+- [x] Jupiter Tokens V2 integration (liquidity, organic score, audit)
+- [x] Rugcheck integration (input + output token risk scores)
+- [x] Liquidity depth rule (absolute floors + price impact cross-check)
 - [x] Live source provenance in responses and logs
 - [x] Zod schema validation with base58 mint validation
 - [x] Structured JSON request logging (decision, policy_version, live_sources)
@@ -229,7 +226,6 @@ Tests cover rule engine, schema validation, policy decisions, token risk (both i
 - [x] x402 payment wrapping (Solana devnet)
 - [x] Telegram bot with symbol-to-mint resolution
 - [x] Jupiter live price impact integration
-- [x] Rugcheck token risk integration
 - [x] Policy layer (allow / warn / block + recommended safer parameters)
 - [x] Agent integration example (HTTP API, fail-open/fail-closed)
 - [x] MCP server for AI agent discovery
@@ -238,7 +234,7 @@ Tests cover rule engine, schema validation, policy decisions, token risk (both i
 - [x] API key auth + rate limiting
 - [x] Docker deployment
 - [ ] Buyer validation — does anyone want this enough to integrate?
-- [ ] Additional live signals (liquidity, volume)
+- [ ] Additional live signals (on-chain volume, historical patterns)
 
 ## Known limitations
 

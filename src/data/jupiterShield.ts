@@ -4,6 +4,12 @@
  * Fetches structured token safety warnings from Jupiter's Ultra API.
  * 16 warning types with severity (info/warning/critical).
  *
+ * Response format (verified against real endpoint 2026-03-19,
+ * sample responses saved in test/fixtures/jupiter-shield-samples.json):
+ *   GET /ultra/v1/shield?mints=<mint1>,<mint2>
+ *   → { warnings: { [mint: string]: Array<{ type, message, severity }> } }
+ *   Clean tokens return empty arrays. Missing/unknown mints are omitted.
+ *
  * Requires JUPITER_API_KEY — same key used for quotes.
  * Returns null per-token if the API is down or unconfigured (fail-open).
  */

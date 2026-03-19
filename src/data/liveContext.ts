@@ -10,7 +10,7 @@ import { fetchJupiterToken, type JupiterTokenResult } from "./jupiterTokens";
  * Each field is optional — if a provider is down or unconfigured,
  * the field is simply missing and rules fall back to static checks.
  *
- * Three live data sources:
+ * Four live data sources:
  * - Jupiter quotes (price impact)
  * - Jupiter Shield (16 structured token warnings)
  * - Jupiter Tokens V2 (liquidity, organic score, audit data)

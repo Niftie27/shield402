@@ -8,9 +8,14 @@ import type { Rule } from "./rule";
  * Token safety rule — combines Jupiter Shield warnings, Rugcheck scores,
  * and Jupiter Tokens V2 audit data into a single verdict.
  *
- * Severity is CONTEXTUAL: the same warning (e.g. HAS_MINT_AUTHORITY)
- * maps to different severities depending on trade size. A $2 trade into
- * a token with mint authority is a warn; a $5000 trade is a block.
+ * Severity is determined by warning type, not trade size. We cannot
+ * reliably estimate USD value from amount_in (raw token units vary
+ * across tokens — 100 BONK ≠ 100 SOL). Rather than pretend to be
+ * dollar-contextual, the rule uses a clear tier model:
+ *
+ * - Critical warnings (honeypot, non-transferable) → block always
+ * - Dangerous warnings (mint/freeze authority, permanent delegate) → warn
+ * - Informational warnings (not verified, new listing) → noted but don't trigger
  *
  * Data sources (all fail-open):
  * - Jupiter Shield: 16 structured warnings (honeypot, mint/freeze authority, etc.)
@@ -18,39 +23,35 @@ import type { Rule } from "./rule";
  * - Jupiter Tokens V2: isVerified, organicScore, audit data
  */
 
-/** Trade size thresholds for contextual severity. */
-const SMALL_TRADE_AMOUNT = 10;   // ≤10 units of input token = "small"
-const LARGE_TRADE_AMOUNT = 100;  // ≥100 units = "large"
-
-/** Rugcheck thresholds (same as before). */
+/** Rugcheck thresholds. */
 const RUGCHECK_BLOCK_THRESHOLD = 80;
 const RUGCHECK_WARN_THRESHOLD = 40;
 
-/** Jupiter Shield warning types that are always critical regardless of size. */
-const ALWAYS_BLOCK: Set<string> = new Set([
+/**
+ * Jupiter Shield warning severity tiers.
+ *
+ * Critical: these represent immediate, unconditional danger.
+ * Warn: these represent structural risk the caller should know about.
+ * Info: these are noted in the response but don't trigger the rule.
+ */
+const CRITICAL: Set<string> = new Set([
   "NOT_SELLABLE",       // Honeypot — can buy but can't sell
   "NON_TRANSFERABLE",   // Can't move the token at all
 ]);
 
-/** Warnings that escalate to block for large trades. */
-const BLOCK_IF_LARGE: Set<string> = new Set([
-  "HAS_MINT_AUTHORITY",       // Supply can be inflated
-  "HAS_FREEZE_AUTHORITY",     // Accounts can be frozen
-  "HAS_PERMANENT_DELEGATE",   // Tokens can be drained
-  "HIGH_SUPPLY_CONCENTRATION", // Whale-dominated
+const WARN: Set<string> = new Set([
+  "HAS_MINT_AUTHORITY",              // Supply can be inflated
+  "HAS_FREEZE_AUTHORITY",            // Accounts can be frozen
+  "HAS_PERMANENT_DELEGATE",          // Tokens can be drained
+  "HIGH_SUPPLY_CONCENTRATION",       // Whale-dominated
+  "SUSPICIOUS_DEV_ACTIVITY",         // Dev wallet red flags
+  "SUSPICIOUS_TOP_HOLDER_ACTIVITY",  // Top holders dumping
+  "LOW_LIQUIDITY",                   // Can't trade meaningful amounts
+  "MUTABLE_TRANSFER_FEES",           // Fee rug possible
+  "VERY_LOW_TRADING_ACTIVITY",       // Nearly dead
 ]);
 
-/** Warnings that are always at least a warn. */
-const WARN_ALWAYS: Set<string> = new Set([
-  "SUSPICIOUS_DEV_ACTIVITY",
-  "SUSPICIOUS_TOP_HOLDER_ACTIVITY",
-  "LOW_LIQUIDITY",
-  "MUTABLE_TRANSFER_FEES",
-  "VERY_LOW_TRADING_ACTIVITY",
-]);
-
-/** Informational warnings — flagged but don't trigger on their own. */
-const INFO_ONLY: Set<string> = new Set([
+const INFO: Set<string> = new Set([
   "NOT_VERIFIED",
   "NEW_LISTING",
   "LOW_ORGANIC_ACTIVITY",
@@ -61,7 +62,7 @@ export const tokenSafetyRule: Rule = {
   id: "token_safety",
   description: "Multi-source token safety assessment combining Jupiter Shield, Rugcheck, and Tokens V2 audit data.",
 
-  evaluate(trade: ValidatedTradeCheck, liveContext?: LiveContext): RuleResult {
+  evaluate(_trade: ValidatedTradeCheck, liveContext?: LiveContext): RuleResult {
     const findings: string[] = [];
     let maxSeverity: "low" | "caution" | "high" = "low";
 
@@ -83,16 +84,12 @@ export const tokenSafetyRule: Rule = {
       };
     }
 
-    const tradeSize = trade.amount_in;
-    const isLarge = tradeSize >= LARGE_TRADE_AMOUNT;
-    const isSmall = tradeSize <= SMALL_TRADE_AMOUNT;
-
     // --- Jupiter Shield warnings (input + output) ---
     const shieldInputWarnings = liveContext?.jupiter_shield_input?.warnings ?? [];
     const shieldOutputWarnings = liveContext?.jupiter_shield_output?.warnings ?? [];
 
-    const inputSeverity = assessShieldWarnings(shieldInputWarnings, "Input", isLarge, isSmall, findings);
-    const outputSeverity = assessShieldWarnings(shieldOutputWarnings, "Output", isLarge, isSmall, findings);
+    const inputSeverity = assessShieldWarnings(shieldInputWarnings, "Input", findings);
+    const outputSeverity = assessShieldWarnings(shieldOutputWarnings, "Output", findings);
 
     maxSeverity = worstSeverity(maxSeverity, inputSeverity, outputSeverity);
 
@@ -110,23 +107,20 @@ export const tokenSafetyRule: Rule = {
     }
 
     // --- Jupiter Tokens V2 audit flags ---
-    const tokenInput = liveContext?.jupiter_token_input;
     const tokenOutput = liveContext?.jupiter_token_output;
+    const tokenInput = liveContext?.jupiter_token_input;
 
     if (tokenOutput) {
-      // Unverified output token + not a tiny trade = warn
-      if (tokenOutput.isVerified === false && !isSmall) {
+      if (tokenOutput.isVerified === false) {
         findings.push("Output token is not verified on Jupiter.");
         maxSeverity = worstSeverity(maxSeverity, "caution");
       }
 
-      // Very low organic score = warn (bot-dominated trading)
       if (tokenOutput.organicScore !== undefined && tokenOutput.organicScore < 20) {
         findings.push(`Output token has very low organic activity (score: ${tokenOutput.organicScore.toFixed(0)}).`);
         maxSeverity = worstSeverity(maxSeverity, "caution");
       }
 
-      // High bot holder percentage
       if (tokenOutput.audit?.botHoldersPercentage !== undefined && tokenOutput.audit.botHoldersPercentage > 30) {
         findings.push(`Output token has ${tokenOutput.audit.botHoldersPercentage.toFixed(0)}% bot holders.`);
         maxSeverity = worstSeverity(maxSeverity, "caution");
@@ -134,7 +128,7 @@ export const tokenSafetyRule: Rule = {
     }
 
     if (tokenInput) {
-      if (tokenInput.isVerified === false && !isSmall) {
+      if (tokenInput.isVerified === false) {
         findings.push("Input token is not verified on Jupiter.");
         maxSeverity = worstSeverity(maxSeverity, "caution");
       }
@@ -143,6 +137,16 @@ export const tokenSafetyRule: Rule = {
     // --- Build result ---
     if (maxSeverity === "low") {
       const sources = describeSources(liveContext);
+      // Surface INFO-only findings in the message so callers can see them,
+      // but keep the rule non-triggering (severity stays low).
+      if (findings.length > 0) {
+        return {
+          rule_id: "token_safety",
+          triggered: false,
+          severity: "low",
+          message: `Token safety checks passed (${sources}). Noted: ${findings.join(" ")}`,
+        };
+      }
       return {
         rule_id: "token_safety",
         triggered: false,
@@ -162,47 +166,30 @@ export const tokenSafetyRule: Rule = {
 
 /**
  * Assess Jupiter Shield warnings for one side (input or output).
- * Severity depends on warning type AND trade size.
+ * Severity is based on warning type alone — no trade-size escalation.
  */
 function assessShieldWarnings(
   warnings: JupiterShieldWarning[],
   side: "Input" | "Output",
-  isLarge: boolean,
-  isSmall: boolean,
   findings: string[],
 ): "low" | "caution" | "high" {
   let severity: "low" | "caution" | "high" = "low";
 
   for (const w of warnings) {
-    if (ALWAYS_BLOCK.has(w.type)) {
+    if (CRITICAL.has(w.type)) {
       findings.push(`${side}: ${w.message} [${w.type}]`);
       severity = "high";
       continue;
     }
 
-    if (BLOCK_IF_LARGE.has(w.type)) {
-      if (isLarge) {
-        findings.push(`${side}: ${w.message} (large trade — elevated risk) [${w.type}]`);
-        severity = worstSeverity(severity, "high");
-      } else if (!isSmall) {
-        findings.push(`${side}: ${w.message} [${w.type}]`);
-        severity = worstSeverity(severity, "caution");
-      }
-      // Small trades: info only, don't add finding
-      continue;
-    }
-
-    if (WARN_ALWAYS.has(w.type)) {
+    if (WARN.has(w.type)) {
       findings.push(`${side}: ${w.message} [${w.type}]`);
       severity = worstSeverity(severity, "caution");
       continue;
     }
 
-    if (INFO_ONLY.has(w.type)) {
-      // Only add finding for non-small trades
-      if (!isSmall) {
-        findings.push(`${side}: ${w.message} [${w.type}]`);
-      }
+    if (INFO.has(w.type)) {
+      findings.push(`${side}: ${w.message} [${w.type}]`);
       // Don't escalate severity — info only
     }
   }
