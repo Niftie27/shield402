@@ -5,6 +5,10 @@ import type { LiveContext } from "../src/data/liveContext";
 import { SOL_MINT, TOKEN_MINTS } from "../src/data/mints";
 
 const USDC_MINT = TOKEN_MINTS["USDC"];
+const BONK_MINT = TOKEN_MINTS["BONK"];
+
+// A plausible unknown token mint (not in the category map)
+const UNKNOWN_MINT = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
 
 function makeTrade(overrides: Partial<ValidatedTradeCheck> = {}): ValidatedTradeCheck {
   return {
@@ -49,10 +53,10 @@ describe("tokenSafetyRule — Jupiter Shield", () => {
     expect(result.decision).toBe("block");
   });
 
-  it("warns on HAS_MINT_AUTHORITY", () => {
+  it("warns on HAS_MINT_AUTHORITY for unknown tokens", () => {
     const liveContext: LiveContext = {
       jupiter_shield_output: {
-        mint: USDC_MINT,
+        mint: UNKNOWN_MINT,
         warnings: [{ type: "HAS_MINT_AUTHORITY", message: "Mint authority enabled", severity: "info" }],
       },
     };
@@ -62,10 +66,10 @@ describe("tokenSafetyRule — Jupiter Shield", () => {
     expect(result.decision).toBe("warn");
   });
 
-  it("warns on HAS_FREEZE_AUTHORITY", () => {
+  it("warns on HAS_FREEZE_AUTHORITY for unknown tokens", () => {
     const liveContext: LiveContext = {
       jupiter_shield_output: {
-        mint: USDC_MINT,
+        mint: UNKNOWN_MINT,
         warnings: [{ type: "HAS_FREEZE_AUTHORITY", message: "Freeze authority enabled", severity: "info" }],
       },
     };
@@ -114,7 +118,7 @@ describe("tokenSafetyRule — Jupiter Shield", () => {
   it("uses highest severity when multiple warnings present", () => {
     const liveContext: LiveContext = {
       jupiter_shield_output: {
-        mint: USDC_MINT,
+        mint: UNKNOWN_MINT,
         warnings: [
           { type: "HAS_MINT_AUTHORITY", message: "Mint authority enabled", severity: "info" },
           { type: "NOT_SELLABLE", message: "Cannot sell", severity: "critical" },
@@ -235,7 +239,7 @@ describe("tokenSafetyRule — multi-source", () => {
   it("combines Shield + Rugcheck into highest severity", () => {
     const liveContext: LiveContext = {
       jupiter_shield_output: {
-        mint: USDC_MINT,
+        mint: UNKNOWN_MINT,
         warnings: [{ type: "HAS_MINT_AUTHORITY", message: "Mint authority", severity: "info" }],
       },
       rugcheck_output: { score: 90, risks: [] },
@@ -259,5 +263,109 @@ describe("tokenSafetyRule — multi-source", () => {
     expect(result.live_sources).toContain("jupiter-tokens");
     expect(result.live_sources).toContain("rugcheck");
     expect(result.confidence).toBe("high");
+  });
+});
+
+// --- Token category: stablecoin false-positive suppression ---
+
+describe("tokenSafetyRule — token categories", () => {
+  it("suppresses HAS_FREEZE_AUTHORITY + HAS_MINT_AUTHORITY for USDC (stable)", () => {
+    // Real Jupiter Shield response for USDC — both warnings are structurally expected
+    const liveContext: LiveContext = {
+      jupiter_shield_output: {
+        mint: USDC_MINT,
+        warnings: [
+          { type: "HAS_FREEZE_AUTHORITY", message: "Freeze authority enabled", severity: "warning" },
+          { type: "HAS_MINT_AUTHORITY", message: "Mint authority enabled", severity: "info" },
+        ],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    // Should NOT trigger — these are expected for a regulated stablecoin
+    const detail = result.rule_details.find((r) => r.rule_id === "token_safety");
+    expect(detail?.triggered).toBe(false);
+    expect(detail?.severity).toBe("low");
+    // But warnings are still noted in the message
+    expect(detail?.message).toContain("expected for stable token");
+  });
+
+  it("suppresses HAS_FREEZE_AUTHORITY for USDT (stable)", () => {
+    const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+    const liveContext: LiveContext = {
+      jupiter_shield_output: {
+        mint: USDT_MINT,
+        warnings: [
+          { type: "HAS_FREEZE_AUTHORITY", message: "Freeze authority enabled", severity: "warning" },
+        ],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "token_safety");
+    expect(detail?.triggered).toBe(false);
+  });
+
+  it("still warns on HAS_FREEZE_AUTHORITY for unknown tokens", () => {
+    const liveContext: LiveContext = {
+      jupiter_shield_output: {
+        mint: UNKNOWN_MINT,
+        warnings: [
+          { type: "HAS_FREEZE_AUTHORITY", message: "Freeze authority enabled", severity: "warning" },
+        ],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    expect(result.triggered_rules).toContain("token_safety");
+    expect(result.decision).toBe("warn");
+  });
+
+  it("still warns on HAS_MINT_AUTHORITY for meme tokens", () => {
+    const liveContext: LiveContext = {
+      jupiter_shield_output: {
+        mint: BONK_MINT,
+        warnings: [
+          { type: "HAS_MINT_AUTHORITY", message: "Mint authority enabled", severity: "info" },
+        ],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    // BONK is "meme" category — not stable, so mint authority is still a warning
+    expect(result.triggered_rules).toContain("token_safety");
+    expect(result.decision).toBe("warn");
+  });
+
+  it("does NOT suppress non-expected warnings for stable tokens", () => {
+    const liveContext: LiveContext = {
+      jupiter_shield_output: {
+        mint: USDC_MINT,
+        warnings: [
+          { type: "HAS_PERMANENT_DELEGATE", message: "Permanent delegate set", severity: "warning" },
+        ],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    // HAS_PERMANENT_DELEGATE is NOT in STABLE_EXPECTED_WARNINGS — still warns
+    expect(result.triggered_rules).toContain("token_safety");
+    expect(result.decision).toBe("warn");
+  });
+
+  it("still blocks on CRITICAL warnings for stable tokens", () => {
+    const liveContext: LiveContext = {
+      jupiter_shield_output: {
+        mint: USDC_MINT,
+        warnings: [
+          { type: "NOT_SELLABLE", message: "Token cannot be sold", severity: "critical" },
+        ],
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    // Critical warnings are never suppressed, regardless of category
+    expect(result.triggered_rules).toContain("token_safety");
+    expect(result.decision).toBe("block");
   });
 });

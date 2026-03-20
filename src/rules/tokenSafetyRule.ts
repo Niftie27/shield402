@@ -3,6 +3,7 @@ import type { RuleResult } from "../types/result";
 import type { LiveContext } from "../data/liveContext";
 import type { JupiterShieldWarning } from "../data/jupiterShield";
 import type { Rule } from "./rule";
+import { getTokenCategory, STABLE_EXPECTED_WARNINGS } from "../data/tokenCategory";
 
 /**
  * Token safety rule — combines Jupiter Shield warnings, Rugcheck scores,
@@ -88,8 +89,11 @@ export const tokenSafetyRule: Rule = {
     const shieldInputWarnings = liveContext?.jupiter_shield_input?.warnings ?? [];
     const shieldOutputWarnings = liveContext?.jupiter_shield_output?.warnings ?? [];
 
-    const inputSeverity = assessShieldWarnings(shieldInputWarnings, "Input", findings);
-    const outputSeverity = assessShieldWarnings(shieldOutputWarnings, "Output", findings);
+    const inputMint = liveContext?.jupiter_shield_input?.mint;
+    const outputMint = liveContext?.jupiter_shield_output?.mint;
+
+    const inputSeverity = assessShieldWarnings(shieldInputWarnings, "Input", findings, inputMint);
+    const outputSeverity = assessShieldWarnings(shieldOutputWarnings, "Output", findings, outputMint);
 
     maxSeverity = worstSeverity(maxSeverity, inputSeverity, outputSeverity);
 
@@ -166,14 +170,20 @@ export const tokenSafetyRule: Rule = {
 
 /**
  * Assess Jupiter Shield warnings for one side (input or output).
+ *
  * Severity is based on warning type alone — no trade-size escalation.
+ * For stable tokens (USDC, USDT), structurally expected warnings like
+ * HAS_MINT_AUTHORITY and HAS_FREEZE_AUTHORITY are downgraded to INFO
+ * (noted but don't trigger). These are normal for regulated stablecoins.
  */
 function assessShieldWarnings(
   warnings: JupiterShieldWarning[],
   side: "Input" | "Output",
   findings: string[],
+  mint?: string,
 ): "low" | "caution" | "high" {
   let severity: "low" | "caution" | "high" = "low";
+  const category = mint ? getTokenCategory(mint) : "unknown";
 
   for (const w of warnings) {
     if (CRITICAL.has(w.type)) {
@@ -183,6 +193,12 @@ function assessShieldWarnings(
     }
 
     if (WARN.has(w.type)) {
+      // Suppress expected warnings for stable tokens (e.g. USDC freeze/mint authority)
+      if (category === "stable" && STABLE_EXPECTED_WARNINGS.has(w.type)) {
+        findings.push(`${side}: ${w.message} [${w.type}] (expected for ${category} token)`);
+        // Don't escalate — structurally normal for this token category
+        continue;
+      }
       findings.push(`${side}: ${w.message} [${w.type}]`);
       severity = worstSeverity(severity, "caution");
       continue;
