@@ -234,6 +234,7 @@
       display: flex;
       gap: 0.5rem;
       margin-bottom: 1rem;
+      flex-wrap: wrap;
     }
 
     .preset-btn {
@@ -271,12 +272,19 @@
   <div class="layout">
     <div class="form-column">
       <div class="api-key-section">
-        <label>API Key</label>
-        <input type="password" id="apiKey" placeholder="X-API-Key (leave empty if auth is disabled)">
+        <label>Shield402 API Key</label>
+        <input type="password" id="apiKey" placeholder="Shield402 access key (leave empty if auth is disabled)">
+        <span style="font-size:0.7rem;color:#555">Authenticates to this Shield402 instance. Data providers (Jupiter, Rugcheck) are configured server-side.</span>
       </div>
 
       <div class="presets">
-        <button class="preset-btn" onclick="loadPreset('safe')">Safe trade</button>
+        <button class="preset-btn" onclick="loadPreset('safe')">SOL &rarr; USDC</button>
+        <button class="preset-btn" onclick="loadPreset('meme')">SOL &rarr; BONK</button>
+        <button class="preset-btn" onclick="loadPreset('memeSell')">BONK &rarr; USDC</button>
+        <button class="preset-btn" onclick="loadPreset('stablecoin')">SOL &rarr; USDT</button>
+        <button class="preset-btn" onclick="loadPreset('major')">JUP &rarr; USDC</button>
+        <button class="preset-btn" onclick="loadPreset('ray')">RAY &rarr; USDC</button>
+        <button class="preset-btn" onclick="loadPreset('orca')">ORCA &rarr; USDC</button>
         <button class="preset-btn" onclick="loadPreset('risky')">Risky trade</button>
         <button class="preset-btn" onclick="loadPreset('dangerous')">Dangerous trade</button>
       </div>
@@ -299,10 +307,12 @@
         <div class="form-group">
           <label>Slippage (bps)</label>
           <input type="number" id="slippageBps" value="50" min="0" max="10000">
+          <span style="font-size:0.7rem;color:#555">100 bps = 1%</span>
         </div>
         <div class="form-group">
-          <label>Priority fee</label>
+          <label>Priority fee (lamports)</label>
           <input type="number" id="priorityFee" value="5000" min="0">
+          <span style="font-size:0.7rem;color:#555">Tip for landing transactions. 1 SOL = 1,000,000,000 lamports. Leave empty to test without.</span>
         </div>
       </div>
 
@@ -336,6 +346,54 @@
         inputMint: 'So11111111111111111111111111111111111111112',
         outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
         amountIn: 2,
+        slippageBps: 50,
+        sendMode: 'protected',
+        priorityFee: 5000,
+      },
+      meme: {
+        inputMint: 'So11111111111111111111111111111111111111112',
+        outputMint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+        amountIn: 5,
+        slippageBps: 100,
+        sendMode: 'protected',
+        priorityFee: 5000,
+      },
+      memeSell: {
+        inputMint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+        outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        amountIn: 1000000,
+        slippageBps: 150,
+        sendMode: 'standard',
+        priorityFee: 5000,
+      },
+      stablecoin: {
+        inputMint: 'So11111111111111111111111111111111111111112',
+        outputMint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+        amountIn: 2,
+        slippageBps: 50,
+        sendMode: 'protected',
+        priorityFee: 5000,
+      },
+      major: {
+        inputMint: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+        outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        amountIn: 50,
+        slippageBps: 50,
+        sendMode: 'protected',
+        priorityFee: 5000,
+      },
+      ray: {
+        inputMint: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
+        outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        amountIn: 50,
+        slippageBps: 50,
+        sendMode: 'protected',
+        priorityFee: 5000,
+      },
+      orca: {
+        inputMint: 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
+        outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        amountIn: 50,
         slippageBps: 50,
         sendMode: 'protected',
         priorityFee: 5000,
@@ -418,35 +476,137 @@
         const decision = data.decision;
         resultDiv.className = `result ${decision} show`;
 
+        // --- Human-readable rule name map ---
+        const ruleNames = {
+          'high_price_impact': 'Market impact',
+          'token_safety': 'Token controls',
+          'low_liquidity': 'Liquidity depth',
+          'slippage_too_wide': 'Slippage',
+          'unprotected_send_mode': 'Send mode',
+          'large_trade_loose_settings': 'Trade size',
+          'missing_execution_params': 'Execution params',
+          'unsafe_combination': 'Risk combination',
+        };
+
+        // --- Clean message: strip [TYPE_CODES] for display ---
+        function cleanMessage(msg) {
+          return msg.replace(/\s*\[[\w_]+\]/g, '');
+        }
+
+        // --- Recommendation labels ---
+        const policyLabels = {
+          recommended_slippage_bps: 'Recommended slippage',
+          recommended_send_mode: 'Recommended send mode',
+          recommended_priority_fee_lamports: 'Recommended priority fee',
+        };
         let policyHtml = '';
         if (data.policy && Object.keys(data.policy).length > 0) {
           const params = Object.entries(data.policy)
-            .map(([k, v]) => `<span class="label">${k.replace(/^recommended_/, '')}:</span> <span class="value">${v}</span>`)
+            .map(([k, v]) => `<span class="label">${policyLabels[k] || k}:</span> <span class="value">${v}${k === 'recommended_slippage_bps' ? ' bps' : ''}${k === 'recommended_priority_fee_lamports' ? ' lamports' : ''}</span>`)
             .join(' &middot; ');
           policyHtml = `<div class="policy-params">${params}</div>`;
         }
 
-        const rulesHtml = data.rule_details
-          ? data.rule_details.map(r => `
+        // --- Degraded banner ---
+        const sourceDescriptions = {
+          'jupiter': 'Route quote (price impact)',
+          'jupiter-shield': 'Token warning signals',
+          'jupiter-tokens:input': 'Input token metadata (liquidity, verification)',
+          'jupiter-tokens:output': 'Output token metadata (liquidity, verification)',
+          'rugcheck:input': 'Independent token-risk check (input)',
+          'rugcheck:output': 'Independent token-risk check (output)',
+        };
+        let degradedHtml = '';
+        if (data.degraded) {
+          const failedDetails = (data.degraded_reasons || [])
+            .map(r => `<div style="margin-top:0.3rem">&bull; <strong>${sourceDescriptions[r.source] || r.source}</strong> &mdash; ${r.status}</div>`)
+            .join('');
+          degradedHtml = `<div style="padding:0.6rem 0.8rem;background:#2a1a00;border:1px solid #5a3a00;border-radius:4px;margin-bottom:0.8rem;font-size:0.85rem;color:#ffaa00;">
+            <strong>Incomplete assessment</strong> &mdash; some data sources failed. This matters more for unknown/new tokens than for well-known pairs.
+            ${failedDetails}
+          </div>`;
+        }
+
+        // --- Summary: key findings in plain English ---
+        const allRules = data.rule_details || [];
+        const summaryRuleIds = ['high_price_impact', 'token_safety', 'low_liquidity'];
+        const confidenceDescriptions = {
+          'high': 'High. Most configured live checks responded successfully.',
+          'medium': 'Medium. Some live data sources were unavailable or not configured.',
+          'low': 'Low. Most live data sources failed or were not configured.',
+        };
+
+        let summaryHtml = '<div style="margin-top:0.6rem;margin-bottom:0.6rem">';
+        for (const ruleId of summaryRuleIds) {
+          const rule = allRules.find(r => r.rule_id === ruleId);
+          if (!rule) continue;
+          const name = ruleNames[ruleId] || ruleId;
+          const msg = cleanMessage(rule.message);
+          const dotColor = rule.triggered ? '#ff5a5a' : '#3a8a3a';
+          summaryHtml += `<div style="display:flex;align-items:baseline;gap:0.5rem;font-size:0.85rem;padding:0.2rem 0;color:#ccc">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0;margin-top:0.3rem"></span>
+            <span><strong style="color:#aaa">${name}:</strong> ${msg}</span>
+          </div>`;
+        }
+        summaryHtml += `<div style="display:flex;align-items:baseline;gap:0.5rem;font-size:0.85rem;padding:0.2rem 0;color:#ccc">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3a5a8a;flex-shrink:0;margin-top:0.3rem"></span>
+          <span><strong style="color:#aaa">Assessment completeness:</strong> ${confidenceDescriptions[data.confidence] || data.confidence}</span>
+        </div>`;
+        summaryHtml += '</div>';
+
+        // --- Triggered rules (non-summary) ---
+        const nonSummaryTriggered = allRules.filter(r => r.triggered && !summaryRuleIds.includes(r.rule_id));
+        let triggeredHtml = '';
+        if (nonSummaryTriggered.length > 0) {
+          triggeredHtml = '<div class="rules-list">' + nonSummaryTriggered.map(r => `
             <div class="rule">
-              <div class="rule-dot ${r.triggered ? 'triggered' : 'ok'}"></div>
-              ${r.rule_id}: ${r.message}
+              <div class="rule-dot triggered"></div>
+              <strong>${ruleNames[r.rule_id] || r.rule_id}:</strong>&nbsp;${cleanMessage(r.message)}
             </div>
-          `).join('')
-          : '';
+          `).join('') + '</div>';
+        }
+
+        // --- Full rule details behind toggle ---
+        const detailToggleId = 'detail-toggle-' + Date.now();
+        const allRulesHtml = allRules.map(r => `
+          <div class="rule">
+            <div class="rule-dot ${r.triggered ? 'triggered' : 'ok'}"></div>
+            <strong>${ruleNames[r.rule_id] || r.rule_id}:</strong>&nbsp;${r.message}
+          </div>
+        `).join('');
+        const detailSection = `<div style="margin-top:0.4rem">
+          <a href="#" style="font-size:0.75rem;color:#5a5aff;text-decoration:none" onclick="event.preventDefault();var el=document.getElementById('${detailToggleId}');el.style.display=el.style.display==='none'?'block':'none'">
+            Show all ${allRules.length} rule details
+          </a>
+        </div>
+        <div id="${detailToggleId}" style="display:none" class="rules-list">${allRulesHtml}</div>`;
 
         resultDiv.innerHTML = `
           <div class="decision-badge ${decision}">${decision}</div>
+          ${degradedHtml}
           <div class="result-reason">${data.reason}</div>
           <div class="result-recommendation">${data.recommendation}</div>
           ${policyHtml}
+          ${summaryHtml}
+          ${triggeredHtml}
           <div class="result-meta">
-            <span>Risk: ${data.risk_level}</span>
-            <span>Confidence: ${data.confidence}</span>
-            <span>Live: ${data.live_sources?.length ? data.live_sources.join(', ') : 'none'}</span>
             <span>Policy: ${data.policy_version}</span>
           </div>
-          ${rulesHtml ? `<div class="rules-list">${rulesHtml}</div>` : ''}
+          ${data.live_sources?.length ? `
+            <div style="margin-top:0.5rem;font-size:0.75rem;color:#666;">
+              <span style="color:#888">Data sources:</span>
+              ${data.live_sources.map(s => {
+                const labels = {
+                  'jupiter': 'Jupiter quote (price impact)',
+                  'jupiter-shield': 'Jupiter Shield (token warnings)',
+                  'jupiter-tokens': 'Jupiter Tokens (liquidity, verification)',
+                  'rugcheck': 'Rugcheck (independent risk score)',
+                };
+                return `<span style="margin-left:0.5rem">${labels[s] || s}</span>`;
+              }).join(' &middot; ')}
+            </div>
+          ` : `<div style="margin-top:0.5rem;font-size:0.75rem;color:#555;">No live data sources (static checks only)</div>`}
+          ${detailSection}
         `;
       } catch (err) {
         resultDiv.className = 'result error show';
