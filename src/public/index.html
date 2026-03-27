@@ -271,10 +271,10 @@
 
   <div class="layout">
     <div class="form-column">
-      <div class="api-key-section">
-        <label>Shield402 API Key</label>
-        <input type="password" id="apiKey" placeholder="Shield402 access key (leave empty if auth is disabled)">
-        <span style="font-size:0.7rem;color:#555">Authenticates to this Shield402 instance. Data providers (Jupiter, Rugcheck) are configured server-side.</span>
+      <div id="apiKeySection" class="api-key-section" style="display:none">
+        <label>Shield402 access key</label>
+        <input type="password" id="apiKey" placeholder="Access key for this Shield402 instance">
+        <span style="font-size:0.7rem;color:#555">This server requires an access key from the operator. This is not a Jupiter or Rugcheck key — those are configured server-side.</span>
       </div>
 
       <div class="presets">
@@ -341,6 +341,16 @@
   </footer>
 
   <script>
+    // Check if this instance requires auth — show/hide API key field accordingly
+    fetch('/health')
+      .then(r => r.json())
+      .then(data => {
+        if (data.auth_required) {
+          document.getElementById('apiKeySection').style.display = '';
+        }
+      })
+      .catch(() => {}); // health failed — leave field hidden, user can still try
+
     const presets = {
       safe: {
         inputMint: 'So11111111111111111111111111111111111111112',

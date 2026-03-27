@@ -84,7 +84,8 @@ export function createApp(options: AppOptions = {}) {
 
   // Health check — always free, never gated
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", version: VERSION });
+    const authRequired = (process.env.API_KEYS ?? "").trim().length > 0;
+    res.json({ status: "ok", version: VERSION, auth_required: authRequired });
   });
 
   // --- Static UI ---
