@@ -141,6 +141,17 @@ export const tokenSafetyRule: Rule = {
     // --- Build result ---
     if (maxSeverity === "low") {
       const sources = describeSources(liveContext);
+      const evidence = {
+        findings,
+        rugcheck_input_score: rugInput?.score ?? null,
+        rugcheck_output_score: rugOutput?.score ?? null,
+        shield_input_warnings: shieldInputWarnings.map((w) => w.type),
+        shield_output_warnings: shieldOutputWarnings.map((w) => w.type),
+        input_verified: tokenInput?.isVerified ?? null,
+        output_verified: tokenOutput?.isVerified ?? null,
+        output_organic_score: tokenOutput?.organicScore ?? null,
+        output_bot_holders_pct: tokenOutput?.audit?.botHoldersPercentage ?? null,
+      };
       // Surface INFO-only findings in the message so callers can see them,
       // but keep the rule non-triggering (severity stays low).
       if (findings.length > 0) {
@@ -149,6 +160,7 @@ export const tokenSafetyRule: Rule = {
           triggered: false,
           severity: "low",
           message: `Token safety checks passed (${sources}). Noted: ${findings.join(" ")}`,
+          evidence,
         };
       }
       return {
@@ -156,6 +168,7 @@ export const tokenSafetyRule: Rule = {
         triggered: false,
         severity: "low",
         message: `Token safety checks passed (${sources}).`,
+        evidence,
       };
     }
 
@@ -231,13 +244,14 @@ function assessRugcheck(
   findings: string[],
 ): "low" | "caution" | "high" {
   if (score > RUGCHECK_BLOCK_THRESHOLD) {
-    findings.push(`${side} token Rugcheck risk score is ${score} (extreme).`);
+    findings.push(`${side} token Rugcheck risk score is ${score}/100 (extreme).`);
     return "high";
   }
   if (score > RUGCHECK_WARN_THRESHOLD) {
-    findings.push(`${side} token Rugcheck risk score is ${score} (elevated).`);
+    findings.push(`${side} token Rugcheck risk score is ${score}/100 (elevated).`);
     return "caution";
   }
+  findings.push(`${side} token Rugcheck score: ${score}/100.`);
   return "low";
 }
 

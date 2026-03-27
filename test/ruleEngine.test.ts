@@ -567,6 +567,47 @@ describe("token risk rule", () => {
     expect(result.policy.recommended_priority_fee_lamports).toBeUndefined();
   });
 
+  // --- Normalized score thresholds (real-world examples) ---
+
+  it("does not trigger for BONK-like normalized score (7/100)", () => {
+    const liveContext = {
+      rugcheck_output: { score: 7, scoreRaw: 101, risks: [] },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext);
+    expect(result.triggered_rules).not.toContain("token_safety");
+    expect(result.decision).toBe("allow");
+  });
+
+  it("does not trigger for RAY-like normalized score (38/100)", () => {
+    const liveContext = {
+      rugcheck_output: { score: 38, scoreRaw: 4110, risks: [] },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext);
+    expect(result.triggered_rules).not.toContain("token_safety");
+    expect(result.decision).toBe("allow");
+  });
+
+  it("warns for ORCA-like normalized score (72/100)", () => {
+    const liveContext = {
+      rugcheck_output: { score: 72, scoreRaw: 51671, risks: [] },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext);
+    expect(result.triggered_rules).toContain("token_safety");
+    expect(result.decision).toBe("warn");
+    // Should warn, not block — 72 is above warn (40) but below block (80)
+    const detail = result.rule_details.find(r => r.rule_id === "token_safety");
+    expect(detail?.severity).toBe("caution");
+  });
+
+  it("still blocks for extreme normalized score (95/100)", () => {
+    const liveContext = {
+      rugcheck_output: { score: 95, scoreRaw: 100000, risks: [] },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext);
+    expect(result.triggered_rules).toContain("token_safety");
+    expect(result.decision).toBe("block");
+  });
+
   it("includes 7 rules in rule_details", () => {
     const result = evaluateTrade(makeTrade());
 

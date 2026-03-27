@@ -15,7 +15,7 @@ You send a proposed Solana trade configuration with **mint addresses** (not tick
 - a **recommendation** for what to change
 - which **rules triggered** and why
 - which **live data sources** contributed (jupiter, jupiter-shield, jupiter-tokens, rugcheck)
-- a **confidence level** (medium = static rules only, high = static + live data)
+- a **confidence level** (proportional to how many live sources returned useful data)
 - a **policy version** for tracking rule changes
 
 ## What this does NOT do
@@ -109,9 +109,9 @@ When `JUPITER_API_KEY` is set, Shield402 fetches live data from three Jupiter en
 - **Jupiter Shield** — 16 structured token warnings (honeypot, mint/freeze authority, permanent delegate, etc.) for both input and output tokens
 - **Jupiter Tokens V2** — token metadata including liquidity depth, organic activity score, verification status, and audit data (bot holders, dev balance, etc.)
 
-When `RUGCHECK_API_KEY` is set, Shield402 fetches token risk reports from Rugcheck for **both** the input and output tokens. This catches buy-side risk (acquiring a scam token) and sell-side risk (holding a token with freeze authority).
+Shield402 also fetches token risk reports from **Rugcheck** for **both** the input and output tokens. Rugcheck is a public API and works without an API key. Setting `RUGCHECK_API_KEY` improves rate limits. Set `RUGCHECK_DISABLED=true` to skip it entirely.
 
-All four data sources are fetched in parallel. Any live data source upgrades confidence from "medium" to "high". The `live_sources` field shows exactly which providers contributed (`jupiter`, `jupiter-shield`, `jupiter-tokens`, `rugcheck`). If any provider is unavailable or times out (3s), the API falls back gracefully — it never blocks or fails because of a provider outage.
+All four data sources are fetched in parallel. Confidence is proportional: based on how many attempted sources returned useful data (not just transport success). The `live_sources` field shows exactly which providers contributed (`jupiter`, `jupiter-shield`, `jupiter-tokens`, `rugcheck`). If any provider is unavailable or times out (3s), the API falls back gracefully — it never blocks or fails because of a provider outage.
 
 ## Agent integration
 
@@ -142,8 +142,7 @@ To add Shield402 to an MCP client, point it at:
       "command": "npx",
       "args": ["tsx", "src/mcp/server.ts"],
       "env": {
-        "JUPITER_API_KEY": "your-key",
-        "RUGCHECK_API_KEY": "your-key"
+        "JUPITER_API_KEY": "your-key"
       }
     }
   }
@@ -184,7 +183,8 @@ All configuration is via environment variables. See `.env.example` for the full 
 - `X402_PRICE` — price per call in USD
 - `TELEGRAM_BOT_TOKEN` — Telegram bot token (optional)
 - `JUPITER_API_KEY` — Jupiter API key for live price impact (optional)
-- `RUGCHECK_API_KEY` — Rugcheck API key for token risk scanning (optional)
+- `RUGCHECK_API_KEY` — Rugcheck API key for better rate limits (optional, public API works without)
+- `RUGCHECK_DISABLED` — set to `true` to skip Rugcheck entirely (optional)
 - `SOLANA_RPC_URL` — Solana RPC for on-chain decimal resolution (optional, defaults to public mainnet)
 - `API_KEYS` — comma-separated API keys for `/check-trade` auth (optional, disabled when unset)
 
