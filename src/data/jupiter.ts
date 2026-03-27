@@ -2,8 +2,8 @@ import type { ValidatedTradeCheck } from "../schema/checkTradeSchema";
 import { resolveDecimals } from "./mints";
 
 export interface JupiterQuoteResult {
-  /** Price impact as a percentage, e.g. 0.12 means 0.12% */
-  priceImpactPct: number;
+  /** Price impact as a percentage, e.g. 0.12 means 0.12%. Null if not reported by Jupiter. */
+  priceImpactPct: number | null;
   /** Expected output amount in atomic units */
   outAmount: string;
   /** Number of routes Jupiter found */
@@ -19,11 +19,9 @@ const JUPITER_TIMEOUT_MS = 3000;
  * Uses mint addresses directly from the validated request.
  * No symbol resolution needed.
  *
- * Returns null if:
- * - API key is not set
- * - the request fails or times out
- *
- * Never throws — caller should still handle errors defensively.
+ * Returns null if the API responded but had no useful data (e.g. unknown token).
+ * Throws on transport failures (network error, timeout, HTTP 5xx) so the caller
+ * can detect degraded state.
  */
 export async function fetchJupiterQuote(
   trade: ValidatedTradeCheck,
@@ -53,12 +51,19 @@ export async function fetchJupiterQuote(
       signal: controller.signal,
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      throw new Error(`Jupiter API returned HTTP ${response.status}`);
+    }
 
     const data = (await response.json()) as Record<string, unknown>;
 
-    const priceImpactPct = parseFloat(String(data.priceImpactPct ?? "0"));
-    if (isNaN(priceImpactPct)) return null;
+    // priceImpactPct: null if missing, reject if present but unparseable
+    let priceImpactPct: number | null = null;
+    if (data.priceImpactPct != null) {
+      const parsed = parseFloat(String(data.priceImpactPct));
+      if (isNaN(parsed)) return null;
+      priceImpactPct = parsed;
+    }
 
     const routePlan = data.routePlan;
 
@@ -67,8 +72,6 @@ export async function fetchJupiterQuote(
       outAmount: String(data.outAmount ?? "0"),
       routeCount: Array.isArray(routePlan) ? routePlan.length : 0,
     };
-  } catch {
-    return null;
   } finally {
     clearTimeout(timeout);
   }

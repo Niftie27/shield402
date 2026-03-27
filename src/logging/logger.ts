@@ -34,6 +34,7 @@ export interface RequestLog {
     risk_level: string;
     confidence: string;
     policy_version: string;
+    degraded: boolean;
     live_sources: string[];
     triggered_rules: string[];
     rule_count: number;
@@ -80,6 +81,7 @@ export function buildRequestLog(
       risk_level: result.risk_level,
       confidence: result.confidence,
       policy_version: result.policy_version,
+      degraded: result.degraded,
       live_sources: result.live_sources,
       triggered_rules: result.triggered_rules,
       rule_count: result.triggered_rules.length,

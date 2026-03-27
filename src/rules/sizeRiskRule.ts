@@ -43,12 +43,22 @@ export const sizeRiskRule: Rule = {
       priority_fee_lamports !== undefined &&
       priority_fee_lamports < lowForLargeTrade;
 
+    const baseEvidence = {
+      amount_in,
+      input_mint,
+      slippage_bps,
+      priority_fee_lamports: priority_fee_lamports ?? null,
+      threshold_large_sol: largeThresholdSol,
+      threshold_very_large_sol: veryLargeThresholdSol,
+    };
+
     if (isVeryLarge && slippageIsWide) {
       return {
         rule_id: this.id,
         triggered: true,
         severity: "high",
         message: `Very large trade (${amount_in} SOL) with wide slippage (${slippage_bps} bps). High sandwich risk.`,
+        evidence: { ...baseEvidence, trigger: "very_large_wide_slippage" },
       };
     }
 
@@ -58,6 +68,7 @@ export const sizeRiskRule: Rule = {
         triggered: true,
         severity: "caution",
         message: `Large trade (${amount_in} SOL) with wide slippage (${slippage_bps} bps). Consider tightening.`,
+        evidence: { ...baseEvidence, trigger: "large_wide_slippage" },
       };
     }
 
@@ -67,6 +78,7 @@ export const sizeRiskRule: Rule = {
         triggered: true,
         severity: "caution",
         message: `Large trade (${amount_in} SOL) with low priority fee (${priority_fee_lamports} lamports). May land slowly.`,
+        evidence: { ...baseEvidence, trigger: "large_low_fee" },
       };
     }
 

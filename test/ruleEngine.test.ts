@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { evaluateTrade } from "../src/rules/index";
 import type { ValidatedTradeCheck } from "../src/schema/checkTradeSchema";
+import type { LiveContextMeta } from "../src/data/liveContext";
 import { SOL_MINT, TOKEN_MINTS } from "../src/data/mints";
+import { VERSION } from "../src/config/version";
 
 const USDC_MINT = TOKEN_MINTS["USDC"];
 const BONK_MINT = TOKEN_MINTS["BONK"];
@@ -177,6 +179,61 @@ describe("unsafe combination rule", () => {
     expect(result.risk_level).toBe("high");
   });
 
+  it("flags caution for non-SOL input with wide slippage + unprotected", () => {
+    const result = evaluateTrade(
+      makeTrade({
+        input_mint: BONK_MINT,
+        output_mint: USDC_MINT,
+        amount_in: 100,
+        slippage_bps: 200,
+        send_mode: "standard",
+      })
+    );
+
+    const detail = result.rule_details.find(
+      (r) => r.rule_id === "unsafe_combination"
+    );
+    expect(detail?.triggered).toBe(true);
+    expect(detail?.severity).toBe("caution");
+    expect(detail?.evidence).toMatchObject({
+      factors: ["wide_slippage", "unprotected_send"],
+    });
+  });
+
+  it("does not fire non-SOL path when send mode is protected", () => {
+    const result = evaluateTrade(
+      makeTrade({
+        input_mint: BONK_MINT,
+        output_mint: USDC_MINT,
+        amount_in: 100,
+        slippage_bps: 200,
+        send_mode: "protected",
+      })
+    );
+
+    const detail = result.rule_details.find(
+      (r) => r.rule_id === "unsafe_combination"
+    );
+    expect(detail?.triggered).toBe(false);
+  });
+
+  it("does not fire non-SOL path when slippage is tight", () => {
+    const result = evaluateTrade(
+      makeTrade({
+        input_mint: BONK_MINT,
+        output_mint: USDC_MINT,
+        amount_in: 100,
+        slippage_bps: 50,
+        send_mode: "standard",
+      })
+    );
+
+    const detail = result.rule_details.find(
+      (r) => r.rule_id === "unsafe_combination"
+    );
+    expect(detail?.triggered).toBe(false);
+  });
+
   it("does not fire when trade is small even if slippage is wide and unprotected", () => {
     const result = evaluateTrade(
       makeTrade({
@@ -319,11 +376,34 @@ describe("policy decision", () => {
       jupiter: { priceImpactPct: 6.5, outAmount: "100", routeCount: 1 },
     };
 
+    // slippage_bps: 50 is already tighter than any recommendation (75),
+    // so no slippage recommendation is emitted — only the text advice
     const result = evaluateTrade(makeTrade({ slippage_bps: 50 }), liveContext);
 
     expect(result.triggered_rules).toContain("high_price_impact");
     expect(result.recommendation).toContain("price impact");
-    expect(result.policy.recommended_slippage_bps).toBeDefined();
+    expect(result.policy.recommended_slippage_bps).toBeUndefined();
+  });
+
+  it("shows <0.01% for tiny non-zero price impact instead of 0.00%", () => {
+    const liveContext = {
+      jupiter: { priceImpactPct: 0.001, outAmount: "100", routeCount: 1 },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "high_price_impact");
+    expect(detail?.message).toContain("<0.01%");
+    expect(detail?.message).not.toContain("0.00%");
+  });
+
+  it("shows normal formatting for price impact >= 0.01%", () => {
+    const liveContext = {
+      jupiter: { priceImpactPct: 0.12, outAmount: "100", routeCount: 1 },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "high_price_impact");
+    expect(detail?.message).toContain("0.12%");
   });
 
   it("gives actionable recommendation for caution-level price impact", () => {
@@ -336,6 +416,28 @@ describe("policy decision", () => {
     expect(result.triggered_rules).toContain("high_price_impact");
     expect(result.decision).toBe("warn");
     expect(result.recommendation).toContain("price impact");
+  });
+
+  // --- Recommendation safety guards ---
+
+  it("does not recommend wider slippage than user provided", () => {
+    // User has 50bps, target would be 75bps — that's wider, don't recommend
+    const result = evaluateTrade(makeTrade({ slippage_bps: 50, send_mode: "standard" }));
+    expect(result.triggered_rules).toContain("unprotected_send_mode");
+    expect(result.policy.recommended_slippage_bps).toBeUndefined();
+  });
+
+  it("does not recommend lower priority fee than user provided", () => {
+    // User has 50000 lamports, our target is 10000 — don't downgrade
+    const result = evaluateTrade(makeTrade({ priority_fee_lamports: 50000, send_mode: "standard" }));
+    expect(result.policy.recommended_priority_fee_lamports).toBeUndefined();
+  });
+
+  it("does not recommend protected send when already protected", () => {
+    // Trade is protected but has wide slippage → only slippage recommendation
+    const result = evaluateTrade(makeTrade({ slippage_bps: 150, send_mode: "protected" }));
+    expect(result.policy.recommended_send_mode).toBeUndefined();
+    expect(result.policy.recommended_slippage_bps).toBe(75);
   });
 });
 
@@ -475,5 +577,496 @@ describe("token risk rule", () => {
     const result = evaluateTrade(makeTrade());
 
     expect(result.policy_version).toBe("0.5.0");
+  });
+});
+
+// --- Degraded mode ---
+
+describe("degraded mode", () => {
+  function makeMeta(overrides: Partial<LiveContextMeta> = {}): LiveContextMeta {
+    return {
+      attempted: [],
+      succeeded: [],
+      failed: [],
+      source_detail: [],
+      ...overrides,
+    };
+  }
+
+  it("degraded is false when no meta is provided (backward compat)", () => {
+    const result = evaluateTrade(makeTrade());
+    expect(result.degraded).toBe(false);
+    expect(result.degraded_reasons).toEqual([]);
+  });
+
+  it("degraded is false when all sources succeed", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output", "jupiter-shield"],
+      succeeded: ["jupiter", "rugcheck:input", "rugcheck:output", "jupiter-shield"],
+      failed: [],
+    });
+    const result = evaluateTrade(makeTrade(), {}, meta);
+    expect(result.degraded).toBe(false);
+    expect(result.degraded_reasons).toEqual([]);
+  });
+
+  it("degraded is true when one source times out", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output"],
+      succeeded: ["jupiter", "rugcheck:input"],
+      failed: [{ source: "rugcheck:output", status: "timeout" }],
+    });
+    const result = evaluateTrade(makeTrade(), {}, meta);
+    expect(result.degraded).toBe(true);
+    expect(result.degraded_reasons).toEqual([
+      { source: "rugcheck:output", status: "timeout" },
+    ]);
+  });
+
+  it("degraded is true when all sources fail", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output"],
+      succeeded: [],
+      failed: [
+        { source: "jupiter", status: "error" },
+        { source: "rugcheck:input", status: "timeout" },
+        { source: "rugcheck:output", status: "timeout" },
+      ],
+    });
+    const result = evaluateTrade(makeTrade(), undefined, meta);
+    expect(result.degraded).toBe(true);
+    expect(result.degraded_reasons).toHaveLength(3);
+  });
+
+  it("degraded is false when all sources are skipped (no API keys)", () => {
+    const meta = makeMeta({
+      attempted: [],
+      succeeded: [],
+      failed: [],
+      source_detail: [
+        { source: "jupiter", status: "skipped", elapsed_ms: 0, fields_returned: [] },
+        { source: "rugcheck:input", status: "skipped", elapsed_ms: 0, fields_returned: [] },
+      ],
+    });
+    const result = evaluateTrade(makeTrade(), undefined, meta);
+    expect(result.degraded).toBe(false);
+  });
+
+  it("escalates to warn when critical token source fails for unknown/meme tokens", () => {
+    // SOL→BONK trade, rugcheck:output failed → can't trust the allow for meme token
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output"],
+      succeeded: ["jupiter", "rugcheck:input"],
+      failed: [{ source: "rugcheck:output", status: "timeout" }],
+    });
+    const liveContext = {
+      jupiter: { priceImpactPct: 0.1, outAmount: "100", routeCount: 1 },
+      rugcheck_input: { score: 5, risks: [] },
+    };
+    const result = evaluateTrade(makeTrade({ output_mint: BONK_MINT }), liveContext, meta);
+    expect(result.degraded).toBe(true);
+    expect(result.decision).toBe("warn");
+    expect(result.risk_level).toBe("caution");
+    expect(result.reason).toContain("rugcheck:output");
+    expect(result.reason).toContain("unavailable");
+    expect(result.recommendation).toContain("caution");
+  });
+
+  it("does NOT escalate for known-safe pairs (SOL→USDC) even if critical source fails", () => {
+    // SOL→USDC is stable/major — rugcheck being down shouldn't block this
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output"],
+      succeeded: ["jupiter", "rugcheck:input"],
+      failed: [{ source: "rugcheck:output", status: "timeout" }],
+    });
+    const liveContext = {
+      jupiter: { priceImpactPct: 0.1, outAmount: "100", routeCount: 1 },
+      rugcheck_input: { score: 5, risks: [] },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext, meta);
+    expect(result.degraded).toBe(true);  // still honestly degraded
+    expect(result.decision).toBe("allow"); // but not escalated for safe pair
+  });
+
+  it("escalates to warn when jupiter-shield fails for unknown tokens", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "jupiter-shield"],
+      succeeded: ["jupiter"],
+      failed: [{ source: "jupiter-shield", status: "error" }],
+    });
+    const liveContext = {
+      jupiter: { priceImpactPct: 0.1, outAmount: "100", routeCount: 1 },
+    };
+    const result = evaluateTrade(makeTrade({ output_mint: BONK_MINT }), liveContext, meta);
+    expect(result.degraded).toBe(true);
+    expect(result.decision).toBe("warn");
+  });
+
+  it("does not escalate when non-critical source fails", () => {
+    // jupiter-tokens:input is not a critical token safety source
+    const meta = makeMeta({
+      attempted: ["jupiter", "jupiter-tokens:input", "rugcheck:input", "rugcheck:output"],
+      succeeded: ["jupiter", "rugcheck:input", "rugcheck:output"],
+      failed: [{ source: "jupiter-tokens:input", status: "error" }],
+    });
+    const liveContext = {
+      jupiter: { priceImpactPct: 0.1, outAmount: "100", routeCount: 1 },
+      rugcheck_input: { score: 5, risks: [] },
+      rugcheck_output: { score: 5, risks: [] },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext, meta);
+    expect(result.degraded).toBe(true); // still degraded (a source failed)
+    expect(result.decision).toBe("allow"); // but not escalated (non-critical)
+  });
+
+  it("does not double-escalate when rules already trigger", () => {
+    // Trade already triggers warn from slippage, and critical source also failed
+    const meta = makeMeta({
+      attempted: ["rugcheck:output"],
+      succeeded: [],
+      failed: [{ source: "rugcheck:output", status: "timeout" }],
+    });
+    const result = evaluateTrade(makeTrade({ slippage_bps: 150 }), undefined, meta);
+    expect(result.degraded).toBe(true);
+    expect(result.decision).toBe("warn"); // was already warn from slippage
+    expect(result.risk_level).toBe("caution"); // not escalated to high
+    // reason comes from the slippage rule, not degraded messaging
+    expect(result.reason).toContain("lippage");
+  });
+
+  it("rugcheck:input failure also triggers critical escalation for non-safe tokens", () => {
+    const meta = makeMeta({
+      attempted: ["rugcheck:input"],
+      succeeded: [],
+      failed: [{ source: "rugcheck:input", status: "error" }],
+    });
+    const result = evaluateTrade(makeTrade({ input_mint: BONK_MINT }), undefined, meta);
+    expect(result.decision).toBe("warn");
+  });
+});
+
+// --- Evidence payloads ---
+
+describe("evidence payloads", () => {
+  it("slippage rule includes thresholds and current value", () => {
+    const result = evaluateTrade(makeTrade({ slippage_bps: 150 }));
+    const detail = result.rule_details.find((r) => r.rule_id === "slippage_too_wide");
+    expect(detail?.evidence).toEqual({
+      current_bps: 150,
+      threshold_caution: 100,
+      threshold_high: 300,
+    });
+  });
+
+  it("send mode rule includes current and recommended mode", () => {
+    const result = evaluateTrade(makeTrade({ send_mode: "standard" }));
+    const detail = result.rule_details.find((r) => r.rule_id === "unprotected_send_mode");
+    expect(detail?.evidence).toEqual({
+      current_mode: "standard",
+      recommended_mode: "protected",
+    });
+  });
+
+  it("size risk rule includes trade params and trigger reason", () => {
+    const result = evaluateTrade(makeTrade({ amount_in: 15, slippage_bps: 150 }));
+    const detail = result.rule_details.find((r) => r.rule_id === "large_trade_loose_settings");
+    expect(detail?.evidence).toMatchObject({
+      amount_in: 15,
+      slippage_bps: 150,
+      trigger: "large_wide_slippage",
+    });
+  });
+
+  it("missing fields rule includes which fields are missing", () => {
+    const result = evaluateTrade(makeTrade({ priority_fee_lamports: undefined }));
+    const detail = result.rule_details.find((r) => r.rule_id === "missing_execution_params");
+    expect(detail?.evidence).toEqual({ missing: ["priority_fee_lamports"] });
+  });
+
+  it("unsafe combination rule includes all three factors", () => {
+    const result = evaluateTrade(makeTrade({ amount_in: 20, slippage_bps: 200, send_mode: "standard" }));
+    const detail = result.rule_details.find((r) => r.rule_id === "unsafe_combination");
+    expect(detail?.evidence).toMatchObject({
+      factors: ["large_trade", "wide_slippage", "unprotected_send"],
+    });
+  });
+
+  it("price impact rule includes impact and thresholds", () => {
+    const liveContext = {
+      jupiter: { priceImpactPct: 2.5, outAmount: "100", routeCount: 1 },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "high_price_impact");
+    expect(detail?.evidence).toEqual({
+      price_impact_pct: 2.5,
+      threshold_caution: 1,
+      threshold_high: 5,
+    });
+  });
+
+  it("token safety rule includes rugcheck scores and shield warnings", () => {
+    const liveContext = {
+      rugcheck_output: {
+        score: 55,
+        risks: [{ name: "Concentrated", level: "warning", description: ".", score: 20 }],
+      },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "token_safety");
+    expect(detail?.evidence).toMatchObject({
+      rugcheck_output_score: 55,
+      rugcheck_input_score: null,
+      input_verified: null,
+      output_verified: null,
+      output_organic_score: null,
+      output_bot_holders_pct: null,
+    });
+  });
+
+  it("token safety evidence includes Tokens V2 fields when available", () => {
+    const liveContext = {
+      jupiter_token_output: {
+        mint: BONK_MINT,
+        isVerified: false,
+        organicScore: 10,
+        audit: { botHoldersPercentage: 45 },
+      },
+      jupiter_token_input: {
+        mint: SOL_MINT,
+        isVerified: true,
+      },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "token_safety");
+    expect(detail?.evidence).toMatchObject({
+      input_verified: true,
+      output_verified: false,
+      output_organic_score: 10,
+      output_bot_holders_pct: 45,
+    });
+  });
+
+  it("liquidity depth rule includes liquidity and trigger type", () => {
+    const liveContext = {
+      jupiter_token_output: {
+        mint: TOKEN_MINTS["USDC"],
+        symbol: "USDC",
+        isVerified: true,
+        organicScore: 99,
+        liquidity: 500,
+      },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "low_liquidity");
+    expect(detail?.evidence).toMatchObject({
+      liquidity_usd: 500,
+      trigger: "below_block_floor",
+    });
+  });
+
+  it("non-triggered rules have no evidence", () => {
+    const result = evaluateTrade(makeTrade());
+    const slippage = result.rule_details.find((r) => r.rule_id === "slippage_too_wide");
+    expect(slippage?.triggered).toBe(false);
+    expect(slippage?.evidence).toBeUndefined();
+  });
+});
+
+// --- Proportional confidence ---
+
+describe("proportional confidence", () => {
+  function makeMeta(overrides: Partial<LiveContextMeta> = {}): LiveContextMeta {
+    return { attempted: [], succeeded: [], failed: [], source_detail: [], ...overrides };
+  }
+
+  it("returns high when all attempted sources succeed (6/6 = 100%)", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output", "jupiter-shield", "jupiter-tokens:input", "jupiter-tokens:output"],
+      succeeded: ["jupiter", "rugcheck:input", "rugcheck:output", "jupiter-shield", "jupiter-tokens:input", "jupiter-tokens:output"],
+    });
+    const result = evaluateTrade(makeTrade(), {}, meta);
+    expect(result.confidence).toBe("high");
+  });
+
+  it("returns high when 5/6 succeed (83% >= 75%)", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output", "jupiter-shield", "jupiter-tokens:input", "jupiter-tokens:output"],
+      succeeded: ["jupiter", "rugcheck:input", "rugcheck:output", "jupiter-shield", "jupiter-tokens:input"],
+      failed: [{ source: "jupiter-tokens:output", status: "error" }],
+    });
+    const result = evaluateTrade(makeTrade(), {}, meta);
+    expect(result.confidence).toBe("high");
+  });
+
+  it("returns medium when 2/6 succeed (33% — between 25% and 75%)", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output", "jupiter-shield", "jupiter-tokens:input", "jupiter-tokens:output"],
+      succeeded: ["jupiter", "rugcheck:input"],
+      failed: [
+        { source: "rugcheck:output", status: "timeout" },
+        { source: "jupiter-shield", status: "error" },
+        { source: "jupiter-tokens:input", status: "error" },
+        { source: "jupiter-tokens:output", status: "error" },
+      ],
+    });
+    const result = evaluateTrade(makeTrade(), {}, meta);
+    expect(result.confidence).toBe("medium");
+  });
+
+  it("returns low when 1/6 succeed (17% < 25%)", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output", "jupiter-shield", "jupiter-tokens:input", "jupiter-tokens:output"],
+      succeeded: ["jupiter"],
+      failed: [
+        { source: "rugcheck:input", status: "timeout" },
+        { source: "rugcheck:output", status: "timeout" },
+        { source: "jupiter-shield", status: "error" },
+        { source: "jupiter-tokens:input", status: "error" },
+        { source: "jupiter-tokens:output", status: "error" },
+      ],
+    });
+    const result = evaluateTrade(makeTrade(), {}, meta);
+    expect(result.confidence).toBe("low");
+  });
+
+  it("returns low when 0/6 succeed (all fail)", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output", "jupiter-shield", "jupiter-tokens:input", "jupiter-tokens:output"],
+      succeeded: [],
+      failed: [
+        { source: "jupiter", status: "timeout" },
+        { source: "rugcheck:input", status: "timeout" },
+        { source: "rugcheck:output", status: "timeout" },
+        { source: "jupiter-shield", status: "error" },
+        { source: "jupiter-tokens:input", status: "error" },
+        { source: "jupiter-tokens:output", status: "error" },
+      ],
+    });
+    const result = evaluateTrade(makeTrade(), undefined, meta);
+    expect(result.confidence).toBe("low");
+  });
+
+  it("returns medium when no sources attempted (static-only deployment)", () => {
+    const meta = makeMeta({ attempted: [], succeeded: [], failed: [] });
+    const result = evaluateTrade(makeTrade(), undefined, meta);
+    expect(result.confidence).toBe("medium");
+  });
+
+  it("falls back to old logic when no meta provided", () => {
+    // With live data but no meta → backward compat → "high"
+    const liveContext = { jupiter: { priceImpactPct: 0.1, outAmount: "100", routeCount: 1 } };
+    const result = evaluateTrade(makeTrade(), liveContext);
+    expect(result.confidence).toBe("high");
+
+    // Without live data and no meta → "medium"
+    const result2 = evaluateTrade(makeTrade());
+    expect(result2.confidence).toBe("medium");
+  });
+});
+
+// --- Provenance ---
+
+describe("provenance", () => {
+  function makeMeta(overrides: Partial<LiveContextMeta> = {}): LiveContextMeta {
+    return { attempted: [], succeeded: [], failed: [], source_detail: [], ...overrides };
+  }
+
+  it("returns empty provenance when no meta provided", () => {
+    const result = evaluateTrade(makeTrade());
+    expect(result.provenance).toEqual([]);
+  });
+
+  it("maps source_detail to provenance entries", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input"],
+      succeeded: ["jupiter", "rugcheck:input"],
+      source_detail: [
+        { source: "jupiter", status: "ok", elapsed_ms: 120, fields_returned: ["jupiter"] },
+        { source: "rugcheck:input", status: "ok", elapsed_ms: 80, fields_returned: ["rugcheck_input"] },
+        { source: "rugcheck:output", status: "skipped", elapsed_ms: 0, fields_returned: [] },
+      ],
+    });
+    const result = evaluateTrade(makeTrade(), {}, meta);
+    expect(result.provenance).toHaveLength(3);
+    expect(result.provenance[0]).toEqual({
+      source: "jupiter", status: "ok", elapsed_ms: 120, fields_used: ["jupiter"],
+    });
+    expect(result.provenance[2]).toEqual({
+      source: "rugcheck:output", status: "skipped", elapsed_ms: 0, fields_used: [],
+    });
+  });
+
+  it("includes failed sources in provenance with error/timeout status", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter"],
+      succeeded: [],
+      failed: [{ source: "jupiter", status: "timeout" }],
+      source_detail: [
+        { source: "jupiter", status: "timeout", elapsed_ms: 3000, fields_returned: [] },
+      ],
+    });
+    const result = evaluateTrade(makeTrade(), undefined, meta);
+    expect(result.provenance[0]).toEqual({
+      source: "jupiter", status: "timeout", elapsed_ms: 3000, fields_used: [],
+    });
+  });
+
+  it("derives live_sources from provenance (collapsed to provider level)", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input", "rugcheck:output"],
+      succeeded: ["jupiter", "rugcheck:input", "rugcheck:output"],
+      source_detail: [
+        { source: "jupiter", status: "ok", elapsed_ms: 100, fields_returned: ["jupiter"] },
+        { source: "rugcheck:input", status: "ok", elapsed_ms: 80, fields_returned: ["rugcheck_input"] },
+        { source: "rugcheck:output", status: "ok", elapsed_ms: 90, fields_returned: ["rugcheck_output"] },
+      ],
+    });
+    const liveContext = {
+      jupiter: { priceImpactPct: 0.1, outAmount: "100", routeCount: 1 },
+      rugcheck_input: { score: 5, risks: [] as never[] },
+      rugcheck_output: { score: 5, risks: [] as never[] },
+    };
+    const result = evaluateTrade(makeTrade(), liveContext, meta);
+    // "rugcheck:input" and "rugcheck:output" collapse to "rugcheck"
+    expect(result.live_sources).toContain("jupiter");
+    expect(result.live_sources).toContain("rugcheck");
+    expect(result.live_sources).toHaveLength(2);
+  });
+
+  it("excludes failed sources from live_sources", () => {
+    const meta = makeMeta({
+      attempted: ["jupiter", "rugcheck:input"],
+      succeeded: ["jupiter"],
+      failed: [{ source: "rugcheck:input", status: "error" }],
+      source_detail: [
+        { source: "jupiter", status: "ok", elapsed_ms: 100, fields_returned: ["jupiter"] },
+        { source: "rugcheck:input", status: "error", elapsed_ms: 50, fields_returned: [] },
+      ],
+    });
+    const result = evaluateTrade(makeTrade(), { jupiter: { priceImpactPct: 0.1, outAmount: "100", routeCount: 1 } }, meta);
+    expect(result.live_sources).toContain("jupiter");
+    expect(result.live_sources).not.toContain("rugcheck");
+  });
+
+  it("excludes skipped sources from live_sources", () => {
+    const meta = makeMeta({
+      attempted: [],
+      succeeded: [],
+      source_detail: [
+        { source: "jupiter", status: "skipped", elapsed_ms: 0, fields_returned: [] },
+        { source: "rugcheck:input", status: "skipped", elapsed_ms: 0, fields_returned: [] },
+      ],
+    });
+    const result = evaluateTrade(makeTrade(), undefined, meta);
+    expect(result.live_sources).toEqual([]);
+  });
+});
+
+// --- Version consistency ---
+
+describe("version consistency", () => {
+  it("policy_version matches VERSION constant", () => {
+    const result = evaluateTrade(makeTrade());
+    expect(result.policy_version).toBe(VERSION);
   });
 });

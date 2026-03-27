@@ -34,8 +34,8 @@ export const liquidityDepthRule: Rule = {
   evaluate(_trade: ValidatedTradeCheck, liveContext?: LiveContext): RuleResult {
     const outputToken = liveContext?.jupiter_token_output;
 
-    // No liquidity data — fail open
-    if (!outputToken?.liquidity) {
+    // No liquidity data — fail open (but 0 is real data, not missing)
+    if (outputToken?.liquidity == null) {
       return {
         rule_id: "low_liquidity",
         triggered: false,
@@ -47,6 +47,9 @@ export const liquidityDepthRule: Rule = {
     const liquidity = outputToken.liquidity;
     const symbol = outputToken.symbol ?? "output token";
 
+    const jupiterQuote = liveContext?.jupiter;
+    const priceImpactPct = jupiterQuote?.priceImpactPct ?? null;
+
     // Absolute liquidity floor — extremely thin markets
     if (liquidity < MIN_LIQUIDITY_BLOCK) {
       return {
@@ -54,6 +57,7 @@ export const liquidityDepthRule: Rule = {
         triggered: true,
         severity: "high",
         message: `${symbol} has only $${formatUsd(liquidity)} total liquidity. Extremely thin market — high risk of total loss.`,
+        evidence: { liquidity_usd: liquidity, price_impact_pct: priceImpactPct, threshold_warn: MIN_LIQUIDITY_WARN, threshold_block: MIN_LIQUIDITY_BLOCK, trigger: "below_block_floor" },
       };
     }
 
@@ -63,6 +67,7 @@ export const liquidityDepthRule: Rule = {
         triggered: true,
         severity: "caution",
         message: `${symbol} has only $${formatUsd(liquidity)} total liquidity. Thin market — trade with caution.`,
+        evidence: { liquidity_usd: liquidity, price_impact_pct: priceImpactPct, threshold_warn: MIN_LIQUIDITY_WARN, threshold_block: MIN_LIQUIDITY_BLOCK, trigger: "below_warn_floor" },
       };
     }
 
@@ -70,23 +75,26 @@ export const liquidityDepthRule: Rule = {
     // High price impact = trade is large relative to the routed pool.
     // priceImpactRule handles impact alone; this rule adds liquidity context.
     // Check high-severity branch first — it's a subset of the caution branch.
-    const jupiterQuote = liveContext?.jupiter;
 
-    if (jupiterQuote && jupiterQuote.priceImpactPct > 2.0 && liquidity < 500_000) {
+    const impact = jupiterQuote?.priceImpactPct;
+
+    if (impact != null && impact > 2.0 && liquidity < 500_000) {
       return {
         rule_id: "low_liquidity",
         triggered: true,
         severity: "high",
-        message: `${symbol} has $${formatUsd(liquidity)} total liquidity with ${jupiterQuote.priceImpactPct.toFixed(2)}% price impact. Trade significantly exceeds available liquidity.`,
+        message: `${symbol} has $${formatUsd(liquidity)} total liquidity with ${impact.toFixed(2)}% price impact. Trade significantly exceeds available liquidity.`,
+        evidence: { liquidity_usd: liquidity, price_impact_pct: impact, trigger: "high_impact_low_liquidity" },
       };
     }
 
-    if (jupiterQuote && jupiterQuote.priceImpactPct > 0.5 && liquidity < 100_000) {
+    if (impact != null && impact > 0.5 && liquidity < 100_000) {
       return {
         rule_id: "low_liquidity",
         triggered: true,
         severity: "caution",
-        message: `${symbol} has $${formatUsd(liquidity)} total liquidity with ${jupiterQuote.priceImpactPct.toFixed(2)}% price impact. Trade is large relative to available liquidity.`,
+        message: `${symbol} has $${formatUsd(liquidity)} total liquidity with ${impact.toFixed(2)}% price impact. Trade is large relative to available liquidity.`,
+        evidence: { liquidity_usd: liquidity, price_impact_pct: impact, trigger: "moderate_impact_low_liquidity" },
       };
     }
 

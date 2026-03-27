@@ -42,10 +42,10 @@ export async function handleCheckTrade(req: Request, res: Response): Promise<voi
     const trade = parsed.data;
 
     // 2. Fetch live market data (fails open — returns {} if unavailable)
-    const liveContext = await fetchLiveContext(trade);
+    const { context: liveContext, meta } = await fetchLiveContext(trade);
 
     // 3. Run rule engine (synchronous, uses live context if available)
-    const result = evaluateTrade(trade, liveContext);
+    const result = evaluateTrade(trade, liveContext, meta);
 
     // 4. Log for observability
     const durationMs = Math.round(performance.now() - startTime);

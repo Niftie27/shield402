@@ -4,6 +4,7 @@ import { handleCheckTrade } from "./routes/checkTrade";
 import { apiKeyAuth } from "./middleware/apiKey";
 import { createRateLimiter } from "./middleware/rateLimit";
 import type { X402Config } from "./config/x402Config";
+import { VERSION } from "./config/version";
 
 export interface AppOptions {
   /** When provided, wraps POST /check-trade with x402 payment middleware. */
@@ -83,7 +84,7 @@ export function createApp(options: AppOptions = {}) {
 
   // Health check — always free, never gated
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", version: "0.1.0" });
+    res.json({ status: "ok", version: VERSION });
   });
 
   // --- Static UI ---

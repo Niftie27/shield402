@@ -38,6 +38,9 @@ export interface RuleResult {
 
   /** Short human-readable explanation. */
   message: string;
+
+  /** Machine-readable data behind the decision. Present when triggered. */
+  evidence?: Record<string, unknown>;
 }
 
 export interface TradeCheckResult {
@@ -62,11 +65,36 @@ export interface TradeCheckResult {
   /** How confident the system is in this assessment. */
   confidence: Confidence;
 
+  /**
+   * Whether the assessment is incomplete due to live data source failures.
+   * When true, at least one attempted source failed (timeout or error).
+   * Skipped sources (unconfigured) do NOT count as degraded.
+   */
+  degraded: boolean;
+
+  /** Which sources failed and why. Empty when degraded is false. */
+  degraded_reasons: Array<{
+    source: string;
+    status: "timeout" | "error";
+  }>;
+
   /** Which rules fired. */
   triggered_rules: string[];
 
   /** Which live data providers contributed to this assessment. */
   live_sources: string[];
+
+  /**
+   * Per-source provenance: what was attempted, what succeeded, what failed.
+   * Uses granular IDs (e.g. "rugcheck:input") for maximum detail.
+   * `live_sources` is derived from this (collapsed to provider-level names).
+   */
+  provenance: Array<{
+    source: string;
+    status: "ok" | "timeout" | "error" | "skipped";
+    elapsed_ms?: number;
+    fields_used: string[];
+  }>;
 
   /** Full rule-by-rule breakdown. Useful for debugging and observability. */
   rule_details: RuleResult[];

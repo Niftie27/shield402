@@ -10,7 +10,7 @@ const x402 = loadX402Config();
 const app = createApp({ x402 });
 
 app.listen(PORT, () => {
-  console.log(`Shield402 Lite running on port ${PORT}`);
+  console.log(`Shield402 running on port ${PORT}`);
   if (!x402) {
     console.log("x402 payment is disabled. Set X402_ENABLED=true in .env to enable.");
   }

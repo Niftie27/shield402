@@ -28,6 +28,23 @@ describe("liquidityDepthRule", () => {
     expect(detail?.message).toContain("skipped");
   });
 
+  it("blocks when liquidity is exactly 0 (not skipped as missing data)", () => {
+    const liveContext: LiveContext = {
+      jupiter_token_output: {
+        mint: USDC_MINT,
+        symbol: "DEAD",
+        liquidity: 0,
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    expect(result.triggered_rules).toContain("low_liquidity");
+    expect(result.decision).toBe("block");
+    const detail = result.rule_details.find((r) => r.rule_id === "low_liquidity");
+    expect(detail?.severity).toBe("high");
+    expect(detail?.message).toContain("Extremely thin market");
+  });
+
   it("blocks on extremely low liquidity (<$1K)", () => {
     const liveContext: LiveContext = {
       jupiter_token_output: {

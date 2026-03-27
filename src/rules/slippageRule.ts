@@ -26,6 +26,7 @@ export const slippageRule: Rule = {
         triggered: true,
         severity: "high",
         message: `Slippage of ${slippage_bps} bps is very wide. This makes the trade easy to sandwich.`,
+        evidence: { current_bps: slippage_bps, threshold_caution: cautionAboveBps, threshold_high: highAboveBps },
       };
     }
 
@@ -35,6 +36,7 @@ export const slippageRule: Rule = {
         triggered: true,
         severity: "caution",
         message: `Slippage of ${slippage_bps} bps is wider than recommended.`,
+        evidence: { current_bps: slippage_bps, threshold_caution: cautionAboveBps, threshold_high: highAboveBps },
       };
     }
 

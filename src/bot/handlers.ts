@@ -118,8 +118,8 @@ export async function handleTradeMessage(ctx: Context) {
   };
 
   // Fetch live data and run rule engine
-  const liveContext = await fetchLiveContext(trade);
-  const result = evaluateTrade(trade, liveContext);
+  const { context: liveContext, meta } = await fetchLiveContext(trade);
+  const result = evaluateTrade(trade, liveContext, meta);
   await ctx.reply(formatResult(result), { parse_mode: "HTML" });
 }
 

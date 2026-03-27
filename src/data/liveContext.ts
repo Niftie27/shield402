@@ -3,6 +3,7 @@ import { fetchJupiterQuote, type JupiterQuoteResult } from "./jupiter";
 import { fetchRugcheckReport, type RugcheckResult } from "./rugcheck";
 import { fetchJupiterShield, type JupiterShieldResult } from "./jupiterShield";
 import { fetchJupiterToken, type JupiterTokenResult } from "./jupiterTokens";
+import { isRealApiKey } from "./apiKeyCheck";
 
 /**
  * Live market data fetched before rule evaluation.
@@ -27,6 +28,33 @@ export interface LiveContext {
 }
 
 /**
+ * Per-source tracking of what was attempted, what succeeded, and what failed.
+ *
+ * This feeds three downstream consumers:
+ * - degraded mode (failed sources → degraded: true)
+ * - confidence calculation (succeeded/attempted ratio)
+ * - provenance (full per-source status in the response)
+ */
+export interface SourceDetail {
+  source: string;
+  status: "ok" | "timeout" | "error" | "skipped";
+  elapsed_ms: number;
+  fields_returned: string[];
+}
+
+export interface LiveContextMeta {
+  attempted: string[];
+  succeeded: string[];
+  failed: Array<{ source: string; status: "timeout" | "error" }>;
+  source_detail: SourceDetail[];
+}
+
+export interface LiveContextResult {
+  context: LiveContext;
+  meta: LiveContextMeta;
+}
+
+/**
  * Fetch live market context for a trade.
  *
  * Design principles:
@@ -34,76 +62,131 @@ export interface LiveContext {
  * - Short timeout: don't let slow providers block the API
  * - Centralized: all live data fetching happens here, not inside rules
  * - Parallel: independent providers are fetched concurrently
+ * - Observable: returns metadata about what was attempted/succeeded/failed
  *
- * When no live data is available, returns an empty object.
+ * When no live data is available, returns an empty context.
  * The rule engine still works — it just uses static checks only.
  */
 export async function fetchLiveContext(
   trade: ValidatedTradeCheck,
-): Promise<LiveContext> {
+): Promise<LiveContextResult> {
   const context: LiveContext = {};
+  const sourceDetail: SourceDetail[] = [];
 
-  const hasJupiterKey = !!process.env.JUPITER_API_KEY;
-  const hasRugcheckKey = !!process.env.RUGCHECK_API_KEY;
+  const hasJupiterKey = isRealApiKey(process.env.JUPITER_API_KEY);
 
-  // Fetch all live data sources in parallel
-  const [
-    jupiterResult,
-    rugcheckInputResult,
-    rugcheckOutputResult,
-    shieldResult,
-    tokenInputResult,
-    tokenOutputResult,
-  ] = await Promise.allSettled([
-    hasJupiterKey ? fetchJupiterQuote(trade) : null,
-    hasRugcheckKey ? fetchRugcheckReport(trade.input_mint) : null,
-    hasRugcheckKey ? fetchRugcheckReport(trade.output_mint) : null,
-    hasJupiterKey ? fetchJupiterShield([trade.input_mint, trade.output_mint]) : null,
-    hasJupiterKey ? fetchJupiterToken(trade.input_mint) : null,
-    hasJupiterKey ? fetchJupiterToken(trade.output_mint) : null,
-  ]);
+  // Rugcheck works without an API key (public endpoint).
+  // Only skip if explicitly disabled via RUGCHECK_DISABLED=true.
+  const rugcheckEnabled = process.env.RUGCHECK_DISABLED !== "true";
 
-  if (jupiterResult.status === "fulfilled" && jupiterResult.value) {
-    context.jupiter = jupiterResult.value;
-  } else if (jupiterResult.status === "rejected") {
-    console.error("Jupiter fetch failed:", jupiterResult.reason);
+  // Define all sources with their names and whether they're configured
+  const sources = [
+    { name: "jupiter", configured: hasJupiterKey },
+    { name: "rugcheck:input", configured: rugcheckEnabled },
+    { name: "rugcheck:output", configured: rugcheckEnabled },
+    { name: "jupiter-shield", configured: hasJupiterKey },
+    { name: "jupiter-tokens:input", configured: hasJupiterKey },
+    { name: "jupiter-tokens:output", configured: hasJupiterKey },
+  ];
+
+  // Record skipped sources (disabled or unconfigured)
+  for (const s of sources) {
+    if (!s.configured) {
+      sourceDetail.push({ source: s.name, status: "skipped", elapsed_ms: 0, fields_returned: [] });
+    }
   }
 
-  if (rugcheckInputResult.status === "fulfilled" && rugcheckInputResult.value) {
-    context.rugcheck_input = rugcheckInputResult.value;
-  } else if (rugcheckInputResult.status === "rejected") {
-    console.error("Rugcheck (input) fetch failed:", rugcheckInputResult.reason);
+  // Timed fetch wrapper
+  async function timedFetch<T>(name: string, fn: () => Promise<T | null>): Promise<{ name: string; value: T | null; elapsed_ms: number }> {
+    const start = Date.now();
+    try {
+      const value = await fn();
+      return { name, value, elapsed_ms: Date.now() - start };
+    } catch (err) {
+      throw { name, elapsed_ms: Date.now() - start, error: err };
+    }
   }
 
-  if (rugcheckOutputResult.status === "fulfilled" && rugcheckOutputResult.value) {
-    context.rugcheck_output = rugcheckOutputResult.value;
-  } else if (rugcheckOutputResult.status === "rejected") {
-    console.error("Rugcheck (output) fetch failed:", rugcheckOutputResult.reason);
+  // Build fetch promises (only for configured sources)
+  const fetches: Promise<{ name: string; value: unknown; elapsed_ms: number }>[] = [];
+  if (hasJupiterKey) fetches.push(timedFetch("jupiter", () => fetchJupiterQuote(trade)));
+  if (rugcheckEnabled) fetches.push(timedFetch("rugcheck:input", () => fetchRugcheckReport(trade.input_mint)));
+  if (rugcheckEnabled) fetches.push(timedFetch("rugcheck:output", () => fetchRugcheckReport(trade.output_mint)));
+  if (hasJupiterKey) fetches.push(timedFetch("jupiter-shield", () => fetchJupiterShield([trade.input_mint, trade.output_mint])));
+  if (hasJupiterKey) fetches.push(timedFetch("jupiter-tokens:input", () => fetchJupiterToken(trade.input_mint)));
+  if (hasJupiterKey) fetches.push(timedFetch("jupiter-tokens:output", () => fetchJupiterToken(trade.output_mint)));
+
+  const results = await Promise.allSettled(fetches);
+
+  // Process results
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      const { name, value, elapsed_ms } = r.value;
+      if (value == null) {
+        // Fetch returned null (provider returned empty/no data)
+        sourceDetail.push({ source: name, status: "ok", elapsed_ms, fields_returned: [] });
+        continue;
+      }
+
+      const fields: string[] = [];
+
+      switch (name) {
+        case "jupiter":
+          context.jupiter = value as JupiterQuoteResult;
+          fields.push("jupiter");
+          break;
+        case "rugcheck:input":
+          context.rugcheck_input = value as RugcheckResult;
+          fields.push("rugcheck_input");
+          break;
+        case "rugcheck:output":
+          context.rugcheck_output = value as RugcheckResult;
+          fields.push("rugcheck_output");
+          break;
+        case "jupiter-shield": {
+          const shieldMap = value as Map<string, JupiterShieldResult>;
+          const inputShield = shieldMap.get(trade.input_mint);
+          const outputShield = shieldMap.get(trade.output_mint);
+          if (inputShield) { context.jupiter_shield_input = inputShield; fields.push("jupiter_shield_input"); }
+          if (outputShield) { context.jupiter_shield_output = outputShield; fields.push("jupiter_shield_output"); }
+          break;
+        }
+        case "jupiter-tokens:input":
+          context.jupiter_token_input = value as JupiterTokenResult;
+          fields.push("jupiter_token_input");
+          break;
+        case "jupiter-tokens:output":
+          context.jupiter_token_output = value as JupiterTokenResult;
+          fields.push("jupiter_token_output");
+          break;
+      }
+
+      sourceDetail.push({ source: name, status: "ok", elapsed_ms, fields_returned: fields });
+    } else {
+      // rejected — extract our wrapped error info
+      const info = r.reason as { name: string; elapsed_ms: number; error: unknown };
+      const isTimeout =
+        (info.error instanceof DOMException && info.error.name === "AbortError") ||
+        (info.error instanceof Error && info.error.name === "AbortError");
+      const status: "timeout" | "error" = isTimeout ? "timeout" : "error";
+      const reason = info.error instanceof Error ? info.error.message : String(info.error);
+      sourceDetail.push({ source: info.name, status, elapsed_ms: info.elapsed_ms, fields_returned: [] });
+      console.error(`${info.name} fetch failed:`, reason);
+    }
   }
 
-  // Jupiter Shield — unpack map into input/output fields
-  if (shieldResult.status === "fulfilled" && shieldResult.value) {
-    const shieldMap = shieldResult.value;
-    const inputShield = shieldMap.get(trade.input_mint);
-    const outputShield = shieldMap.get(trade.output_mint);
-    if (inputShield) context.jupiter_shield_input = inputShield;
-    if (outputShield) context.jupiter_shield_output = outputShield;
-  } else if (shieldResult.status === "rejected") {
-    console.error("Jupiter Shield fetch failed:", shieldResult.reason);
-  }
+  // Build meta summary
+  const attempted = sourceDetail.filter((s) => s.status !== "skipped").map((s) => s.source);
+  const succeeded = sourceDetail.filter((s) => s.status === "ok" && s.fields_returned.length > 0).map((s) => s.source);
+  const failed = sourceDetail
+    .filter((s): s is SourceDetail & { status: "timeout" | "error" } => s.status === "timeout" || s.status === "error")
+    .map((s) => ({
+      source: s.source,
+      status: s.status as "timeout" | "error",
+    }));
 
-  // Jupiter Tokens V2
-  if (tokenInputResult.status === "fulfilled" && tokenInputResult.value) {
-    context.jupiter_token_input = tokenInputResult.value;
-  } else if (tokenInputResult.status === "rejected") {
-    console.error("Jupiter Tokens (input) fetch failed:", tokenInputResult.reason);
-  }
-
-  if (tokenOutputResult.status === "fulfilled" && tokenOutputResult.value) {
-    context.jupiter_token_output = tokenOutputResult.value;
-  } else if (tokenOutputResult.status === "rejected") {
-    console.error("Jupiter Tokens (output) fetch failed:", tokenOutputResult.reason);
-  }
-
-  return context;
+  return {
+    context,
+    meta: { attempted, succeeded, failed, source_detail: sourceDetail },
+  };
 }

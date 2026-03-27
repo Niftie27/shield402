@@ -101,7 +101,7 @@ describe("fetchLiveContext", () => {
       .mockResolvedValueOnce(mockTokenInput)   // input
       .mockResolvedValueOnce(mockTokenOutput);  // output
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx, meta } = await fetchLiveContext(baseTrade);
 
     expect(ctx.jupiter).toEqual(mockQuote);
     expect(ctx.rugcheck_input).toEqual(mockRugcheck);
@@ -110,6 +110,18 @@ describe("fetchLiveContext", () => {
     expect(ctx.jupiter_shield_output).toEqual(mockShieldOutput);
     expect(ctx.jupiter_token_input).toEqual(mockTokenInput);
     expect(ctx.jupiter_token_output).toEqual(mockTokenOutput);
+
+    // Meta: all 6 sources attempted and succeeded, none failed
+    expect(meta.attempted).toHaveLength(6);
+    expect(meta.succeeded).toHaveLength(6);
+    expect(meta.failed).toHaveLength(0);
+    // Every source_detail has status "ok"
+    for (const s of meta.source_detail) {
+      if (s.status !== "skipped") {
+        expect(s.status).toBe("ok");
+        expect(s.elapsed_ms).toBeGreaterThanOrEqual(0);
+      }
+    }
   });
 
   it("calls providers with correct arguments", async () => {
@@ -143,7 +155,7 @@ describe("fetchLiveContext", () => {
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx, meta } = await fetchLiveContext(baseTrade);
 
     // Rugcheck survived
     expect(ctx.rugcheck_input).toEqual(mockRugcheck);
@@ -155,6 +167,17 @@ describe("fetchLiveContext", () => {
     expect(ctx.jupiter_shield_output).toBeUndefined();
     expect(ctx.jupiter_token_input).toBeUndefined();
     expect(ctx.jupiter_token_output).toBeUndefined();
+
+    // Meta: Jupiter sources failed as timeout, Rugcheck succeeded
+    expect(meta.attempted).toHaveLength(6);
+    expect(meta.succeeded).toContain("rugcheck:input");
+    expect(meta.succeeded).toContain("rugcheck:output");
+    expect(meta.failed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "jupiter", status: "timeout" }),
+        expect.objectContaining({ source: "jupiter-shield", status: "timeout" }),
+      ]),
+    );
 
     // Errors were logged
     expect(consoleSpy).toHaveBeenCalled();
@@ -174,7 +197,7 @@ describe("fetchLiveContext", () => {
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx } = await fetchLiveContext(baseTrade);
 
     expect(ctx.jupiter).toEqual(mockQuote);
     expect(ctx.jupiter_shield_input).toEqual(mockShieldInput);
@@ -201,9 +224,8 @@ describe("fetchLiveContext", () => {
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx, meta } = await fetchLiveContext(baseTrade);
 
-    expect(ctx).toEqual({});
     expect(ctx.jupiter).toBeUndefined();
     expect(ctx.rugcheck_input).toBeUndefined();
     expect(ctx.rugcheck_output).toBeUndefined();
@@ -211,6 +233,14 @@ describe("fetchLiveContext", () => {
     expect(ctx.jupiter_shield_output).toBeUndefined();
     expect(ctx.jupiter_token_input).toBeUndefined();
     expect(ctx.jupiter_token_output).toBeUndefined();
+
+    // Meta: all 6 attempted, 0 succeeded, all 6 failed as timeout
+    expect(meta.attempted).toHaveLength(6);
+    expect(meta.succeeded).toHaveLength(0);
+    expect(meta.failed).toHaveLength(6);
+    for (const f of meta.failed) {
+      expect(f.status).toBe("timeout");
+    }
 
     consoleSpy.mockRestore();
   });
@@ -221,9 +251,16 @@ describe("fetchLiveContext", () => {
     vi.mocked(fetchJupiterShield).mockResolvedValue(null);
     vi.mocked(fetchJupiterToken).mockResolvedValue(null);
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx, meta } = await fetchLiveContext(baseTrade);
 
-    expect(ctx).toEqual({});
+    expect(ctx.jupiter).toBeUndefined();
+    expect(ctx.rugcheck_input).toBeUndefined();
+
+    // null returns are "ok" (API responded, just no data) — not failures,
+    // but they don't count as "succeeded" since no data was contributed
+    expect(meta.attempted).toHaveLength(6);
+    expect(meta.succeeded).toHaveLength(0);
+    expect(meta.failed).toHaveLength(0);
   });
 
   // ───────────────────────────────────────────────
@@ -238,7 +275,7 @@ describe("fetchLiveContext", () => {
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx } = await fetchLiveContext(baseTrade);
 
     // Failed providers are absent
     expect(ctx.jupiter).toBeUndefined();
@@ -256,22 +293,30 @@ describe("fetchLiveContext", () => {
   // API key gating
   // ───────────────────────────────────────────────
 
-  it("calls no provider function when both API keys are missing", async () => {
+  it("calls only Rugcheck when Jupiter API key is missing", async () => {
     delete process.env.JUPITER_API_KEY;
-    delete process.env.RUGCHECK_API_KEY;
+    delete process.env.RUGCHECK_API_KEY;  // key not needed for Rugcheck
 
-    await fetchLiveContext(baseTrade);
+    vi.mocked(fetchRugcheckReport).mockResolvedValue(mockRugcheck);
 
+    const { meta } = await fetchLiveContext(baseTrade);
+
+    // Jupiter sources skipped (no key), Rugcheck still called (public API)
     expect(fetchJupiterQuote).not.toHaveBeenCalled();
-    expect(fetchRugcheckReport).not.toHaveBeenCalled();
     expect(fetchJupiterShield).not.toHaveBeenCalled();
     expect(fetchJupiterToken).not.toHaveBeenCalled();
+    expect(fetchRugcheckReport).toHaveBeenCalledTimes(2);
+
+    // 4 Jupiter sources skipped, 2 Rugcheck attempted
+    expect(meta.attempted).toHaveLength(2);
+    expect(meta.succeeded).toHaveLength(2);
+    const skipped = meta.source_detail.filter(s => s.status === "skipped");
+    expect(skipped).toHaveLength(4);
   });
 
-  it("calls only Jupiter providers when only JUPITER_API_KEY is set", async () => {
-    delete process.env.RUGCHECK_API_KEY;
-
+  it("calls all 6 sources when Jupiter API key is set", async () => {
     vi.mocked(fetchJupiterQuote).mockResolvedValue(mockQuote);
+    vi.mocked(fetchRugcheckReport).mockResolvedValue(mockRugcheck);
     vi.mocked(fetchJupiterShield).mockResolvedValue(new Map());
     vi.mocked(fetchJupiterToken).mockResolvedValue(null);
 
@@ -280,20 +325,36 @@ describe("fetchLiveContext", () => {
     expect(fetchJupiterQuote).toHaveBeenCalledOnce();
     expect(fetchJupiterShield).toHaveBeenCalledOnce();
     expect(fetchJupiterToken).toHaveBeenCalledTimes(2);
-    expect(fetchRugcheckReport).not.toHaveBeenCalled();
+    expect(fetchRugcheckReport).toHaveBeenCalledTimes(2);
   });
 
-  it("calls only Rugcheck providers when only RUGCHECK_API_KEY is set", async () => {
-    delete process.env.JUPITER_API_KEY;
+  it("treats placeholder Jupiter key as unconfigured but still calls Rugcheck", async () => {
+    process.env.JUPITER_API_KEY = "<YOUR-JUPITER-API-KEY>";
 
     vi.mocked(fetchRugcheckReport).mockResolvedValue(mockRugcheck);
 
     await fetchLiveContext(baseTrade);
 
-    expect(fetchRugcheckReport).toHaveBeenCalledTimes(2);
     expect(fetchJupiterQuote).not.toHaveBeenCalled();
     expect(fetchJupiterShield).not.toHaveBeenCalled();
     expect(fetchJupiterToken).not.toHaveBeenCalled();
+    expect(fetchRugcheckReport).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips Rugcheck when RUGCHECK_DISABLED=true", async () => {
+    process.env.RUGCHECK_DISABLED = "true";
+
+    vi.mocked(fetchJupiterQuote).mockResolvedValue(mockQuote);
+    vi.mocked(fetchJupiterShield).mockResolvedValue(new Map());
+    vi.mocked(fetchJupiterToken).mockResolvedValue(null);
+
+    const { meta } = await fetchLiveContext(baseTrade);
+
+    expect(fetchRugcheckReport).not.toHaveBeenCalled();
+    expect(fetchJupiterQuote).toHaveBeenCalledOnce();
+
+    const rugSkipped = meta.source_detail.filter(s => s.source.startsWith("rugcheck") && s.status === "skipped");
+    expect(rugSkipped).toHaveLength(2);
   });
 
   // ───────────────────────────────────────────────
@@ -308,7 +369,7 @@ describe("fetchLiveContext", () => {
       new Map([[SOL_MINT, mockShieldInput]]),
     );
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx } = await fetchLiveContext(baseTrade);
 
     expect(ctx.jupiter_shield_input).toEqual(mockShieldInput);
     expect(ctx.jupiter_shield_output).toBeUndefined();
@@ -322,7 +383,7 @@ describe("fetchLiveContext", () => {
       new Map([[USDC_MINT, mockShieldOutput]]),
     );
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx } = await fetchLiveContext(baseTrade);
 
     expect(ctx.jupiter_shield_input).toBeUndefined();
     expect(ctx.jupiter_shield_output).toEqual(mockShieldOutput);
@@ -340,7 +401,7 @@ describe("fetchLiveContext", () => {
       ]),
     );
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx } = await fetchLiveContext(baseTrade);
 
     expect(ctx.jupiter_shield_input).toBeUndefined();
     expect(ctx.jupiter_shield_output).toBeUndefined();
@@ -352,7 +413,7 @@ describe("fetchLiveContext", () => {
     vi.mocked(fetchJupiterToken).mockResolvedValue(null);
     vi.mocked(fetchJupiterShield).mockResolvedValue(new Map());
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx } = await fetchLiveContext(baseTrade);
 
     expect(ctx.jupiter_shield_input).toBeUndefined();
     expect(ctx.jupiter_shield_output).toBeUndefined();
@@ -371,7 +432,7 @@ describe("fetchLiveContext", () => {
       .mockRejectedValueOnce(new Error("output timeout"));
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx } = await fetchLiveContext(baseTrade);
 
     expect(ctx.rugcheck_input).toEqual(mockRugcheck);
     expect(ctx.rugcheck_output).toBeUndefined();
@@ -387,7 +448,7 @@ describe("fetchLiveContext", () => {
       .mockResolvedValueOnce({ score: 5, risks: [] });
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx } = await fetchLiveContext(baseTrade);
 
     expect(ctx.rugcheck_input).toBeUndefined();
     expect(ctx.rugcheck_output).toEqual({ score: 5, risks: [] });
@@ -407,7 +468,7 @@ describe("fetchLiveContext", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await fetchLiveContext(baseTrade);
 
-    expect(consoleSpy).toHaveBeenCalledWith("Jupiter fetch failed:", expect.any(Error));
+    expect(consoleSpy).toHaveBeenCalledWith("jupiter fetch failed:", expect.any(String));
     consoleSpy.mockRestore();
   });
 
@@ -422,7 +483,7 @@ describe("fetchLiveContext", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await fetchLiveContext(baseTrade);
 
-    expect(consoleSpy).toHaveBeenCalledWith("Rugcheck (input) fetch failed:", expect.any(Error));
+    expect(consoleSpy).toHaveBeenCalledWith("rugcheck:input fetch failed:", expect.any(String));
     consoleSpy.mockRestore();
   });
 
@@ -437,7 +498,7 @@ describe("fetchLiveContext", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await fetchLiveContext(baseTrade);
 
-    expect(consoleSpy).toHaveBeenCalledWith("Rugcheck (output) fetch failed:", expect.any(Error));
+    expect(consoleSpy).toHaveBeenCalledWith("rugcheck:output fetch failed:", expect.any(String));
     consoleSpy.mockRestore();
   });
 
@@ -450,7 +511,7 @@ describe("fetchLiveContext", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await fetchLiveContext(baseTrade);
 
-    expect(consoleSpy).toHaveBeenCalledWith("Jupiter Shield fetch failed:", expect.any(Error));
+    expect(consoleSpy).toHaveBeenCalledWith("jupiter-shield fetch failed:", expect.any(String));
     consoleSpy.mockRestore();
   });
 
@@ -465,7 +526,7 @@ describe("fetchLiveContext", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await fetchLiveContext(baseTrade);
 
-    expect(consoleSpy).toHaveBeenCalledWith("Jupiter Tokens (input) fetch failed:", expect.any(Error));
+    expect(consoleSpy).toHaveBeenCalledWith("jupiter-tokens:input fetch failed:", expect.any(String));
     consoleSpy.mockRestore();
   });
 
@@ -480,7 +541,7 @@ describe("fetchLiveContext", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await fetchLiveContext(baseTrade);
 
-    expect(consoleSpy).toHaveBeenCalledWith("Jupiter Tokens (output) fetch failed:", expect.any(Error));
+    expect(consoleSpy).toHaveBeenCalledWith("jupiter-tokens:output fetch failed:", expect.any(String));
     consoleSpy.mockRestore();
   });
 
@@ -507,7 +568,7 @@ describe("fetchLiveContext", () => {
       new Map([[SOL_MINT, shieldData]]),
     );
 
-    const ctx = await fetchLiveContext(sameMintTrade);
+    const { context: ctx } = await fetchLiveContext(sameMintTrade);
 
     expect(ctx.jupiter_shield_input).toEqual(shieldData);
     expect(ctx.jupiter_shield_output).toEqual(shieldData);
@@ -530,7 +591,7 @@ describe("fetchLiveContext", () => {
       .mockResolvedValueOnce(rugResult1)
       .mockResolvedValueOnce(rugResult2);
 
-    const ctx = await fetchLiveContext(sameMintTrade);
+    const { context: ctx } = await fetchLiveContext(sameMintTrade);
 
     expect(ctx.rugcheck_input).toEqual(rugResult1);
     expect(ctx.rugcheck_output).toEqual(rugResult2);
@@ -553,7 +614,7 @@ describe("fetchLiveContext", () => {
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const ctx = await fetchLiveContext(baseTrade);
+    const { context: ctx } = await fetchLiveContext(baseTrade);
 
     expect(ctx.jupiter).toBeUndefined();
     expect(ctx.rugcheck_input).toBeUndefined();

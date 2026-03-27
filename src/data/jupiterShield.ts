@@ -34,7 +34,8 @@ const SHIELD_TIMEOUT_MS = 3000;
  * Fetch Jupiter Shield warnings for one or more mint addresses.
  *
  * Returns a map of mint → warnings. Missing mints are omitted.
- * Returns null if the API key is unset or the call fails.
+ * Returns null if no useful data (e.g. empty warnings object).
+ * Throws on transport failures (network error, timeout, HTTP 5xx).
  */
 export async function fetchJupiterShield(
   mints: string[],
@@ -54,7 +55,9 @@ export async function fetchJupiterShield(
       signal: controller.signal,
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      throw new Error(`Jupiter Shield API returned HTTP ${response.status}`);
+    }
 
     const data = (await response.json()) as {
       warnings?: Record<string, JupiterShieldWarning[]>;
@@ -68,8 +71,6 @@ export async function fetchJupiterShield(
     }
 
     return results;
-  } catch {
-    return null;
   } finally {
     clearTimeout(timeout);
   }

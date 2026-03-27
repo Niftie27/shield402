@@ -136,57 +136,47 @@ describe("fetchJupiterQuote", () => {
   // Timeout
   // ───────────────────────────────────────────────
 
-  it("returns null when fetch is aborted (timeout)", async () => {
+  it("throws when fetch is aborted (timeout)", async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(
       new DOMException("The operation was aborted", "AbortError"),
     );
 
-    const result = await fetchJupiterQuote(baseTrade);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterQuote(baseTrade)).rejects.toThrow();
   });
 
   // ───────────────────────────────────────────────
-  // HTTP errors
+  // HTTP errors — now throw so callers detect degraded state
   // ───────────────────────────────────────────────
 
-  it("returns null on HTTP 500", async () => {
+  it("throws on HTTP 500", async () => {
     globalThis.fetch = mockFetchStatus(500);
 
-    const result = await fetchJupiterQuote(baseTrade);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterQuote(baseTrade)).rejects.toThrow("HTTP 500");
   });
 
-  it("returns null on HTTP 429 (rate limited)", async () => {
+  it("throws on HTTP 429 (rate limited)", async () => {
     globalThis.fetch = mockFetchStatus(429);
 
-    const result = await fetchJupiterQuote(baseTrade);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterQuote(baseTrade)).rejects.toThrow("HTTP 429");
   });
 
-  it("returns null on HTTP 404", async () => {
+  it("throws on HTTP 404", async () => {
     globalThis.fetch = mockFetchStatus(404);
 
-    const result = await fetchJupiterQuote(baseTrade);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterQuote(baseTrade)).rejects.toThrow("HTTP 404");
   });
 
   // ───────────────────────────────────────────────
-  // Malformed JSON
+  // Malformed JSON — throws (transport-level failure)
   // ───────────────────────────────────────────────
 
-  it("returns null when response.json() throws (invalid JSON)", async () => {
+  it("throws when response.json() throws (invalid JSON)", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => { throw new SyntaxError("Unexpected token <"); },
     });
 
-    const result = await fetchJupiterQuote(baseTrade);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterQuote(baseTrade)).rejects.toThrow("Unexpected token");
   });
 
   // ───────────────────────────────────────────────
@@ -205,7 +195,7 @@ describe("fetchJupiterQuote", () => {
     expect(result).toBeNull();
   });
 
-  it("defaults priceImpactPct to 0 when field is missing", async () => {
+  it("returns null priceImpactPct when field is missing", async () => {
     globalThis.fetch = mockFetchOk({
       outAmount: "750000000",
       routePlan: [{ id: 1 }],
@@ -214,7 +204,7 @@ describe("fetchJupiterQuote", () => {
     const result = await fetchJupiterQuote(baseTrade);
 
     expect(result).toEqual({
-      priceImpactPct: 0,
+      priceImpactPct: null,
       outAmount: "750000000",
       routeCount: 1,
     });
@@ -267,9 +257,8 @@ describe("fetchJupiterQuote", () => {
 
     const result = await fetchJupiterQuote(baseTrade);
 
-    // priceImpactPct defaults to parseFloat("0") = 0, which is valid
     expect(result).toEqual({
-      priceImpactPct: 0,
+      priceImpactPct: null,
       outAmount: "0",
       routeCount: 0,
     });
@@ -279,11 +268,9 @@ describe("fetchJupiterQuote", () => {
   // Network error
   // ───────────────────────────────────────────────
 
-  it("returns null on network error (fetch rejects)", async () => {
+  it("throws on network error (fetch rejects)", async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
 
-    const result = await fetchJupiterQuote(baseTrade);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterQuote(baseTrade)).rejects.toThrow("fetch failed");
   });
 });

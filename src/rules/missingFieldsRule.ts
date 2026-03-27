@@ -34,6 +34,7 @@ export const missingFieldsRule: Rule = {
       triggered: true,
       severity: "caution",
       message: `Missing execution parameters: ${missing.join(", ")}. Consider specifying these for better landing quality.`,
+      evidence: { missing },
     };
   },
 };

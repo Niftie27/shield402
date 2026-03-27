@@ -37,6 +37,30 @@ export const unsafeCombinationRule: Rule = {
           `Dangerous combination: large trade (${amount_in} SOL), ` +
           `wide slippage (${slippage_bps} bps), and ${send_mode} send mode. ` +
           `Strongly recommend tightening slippage and using protected send.`,
+        evidence: {
+          factors: ["large_trade", "wide_slippage", "unprotected_send"],
+          amount_in,
+          slippage_bps,
+          send_mode,
+        },
+      };
+    }
+
+    // Non-SOL: can't assess "large" but wide slippage + unprotected is still risky
+    if (!isSolDenominated && slippageIsWide && isUnprotected) {
+      return {
+        rule_id: this.id,
+        triggered: true,
+        severity: "caution",
+        message:
+          `Risky combination: wide slippage (${slippage_bps} bps) with ${send_mode} send mode. ` +
+          `Consider tightening slippage and using protected send.`,
+        evidence: {
+          factors: ["wide_slippage", "unprotected_send"],
+          amount_in,
+          slippage_bps,
+          send_mode,
+        },
       };
     }
 

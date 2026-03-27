@@ -5,6 +5,7 @@ import { evaluateTrade } from "../rules/index";
 import { fetchLiveContext } from "../data/liveContext";
 import type { ValidatedTradeCheck } from "../schema/checkTradeSchema";
 import { isMintAddress } from "../data/mints";
+import { VERSION } from "../config/version";
 import "dotenv/config";
 
 /**
@@ -23,7 +24,7 @@ import "dotenv/config";
 
 const server = new McpServer({
   name: "shield402",
-  version: "0.5.0",
+  version: VERSION,
 });
 
 /**
@@ -104,8 +105,8 @@ server.registerTool(
         output_symbol: args.output_symbol,
       };
 
-      const liveContext = await fetchLiveContext(trade);
-      const result = evaluateTrade(trade, liveContext);
+      const { context: liveContext, meta } = await fetchLiveContext(trade);
+      const result = evaluateTrade(trade, liveContext, meta);
 
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],

@@ -33,6 +33,7 @@ export const sendModeRule: Rule = {
         triggered: true,
         severity: "caution",
         message: "Send mode is unknown. Consider using a protected send path.",
+        evidence: { current_mode: send_mode, recommended_mode: "protected" },
       };
     }
 
@@ -42,6 +43,7 @@ export const sendModeRule: Rule = {
       triggered: true,
       severity: "caution",
       message: "Standard send mode offers no MEV protection. Consider using a protected path (e.g. Jito bundles).",
+      evidence: { current_mode: send_mode, recommended_mode: "protected" },
     };
   },
 };

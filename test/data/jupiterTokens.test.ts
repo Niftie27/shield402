@@ -141,49 +141,41 @@ describe("fetchJupiterToken", () => {
   // Timeout
   // ───────────────────────────────────────────────
 
-  it("returns null when fetch is aborted (timeout)", async () => {
+  it("throws when fetch is aborted (timeout)", async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(
       new DOMException("The operation was aborted", "AbortError"),
     );
 
-    const result = await fetchJupiterToken(SOL_MINT);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterToken(SOL_MINT)).rejects.toThrow();
   });
 
   // ───────────────────────────────────────────────
   // HTTP errors
   // ───────────────────────────────────────────────
 
-  it("returns null on HTTP 500", async () => {
+  it("throws on HTTP 500", async () => {
     globalThis.fetch = mockFetchStatus(500);
 
-    const result = await fetchJupiterToken(SOL_MINT);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterToken(SOL_MINT)).rejects.toThrow("HTTP 500");
   });
 
-  it("returns null on HTTP 429", async () => {
+  it("throws on HTTP 429", async () => {
     globalThis.fetch = mockFetchStatus(429);
 
-    const result = await fetchJupiterToken(SOL_MINT);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterToken(SOL_MINT)).rejects.toThrow("HTTP 429");
   });
 
   // ───────────────────────────────────────────────
   // Malformed responses
   // ───────────────────────────────────────────────
 
-  it("returns null when response.json() throws", async () => {
+  it("throws when response.json() throws", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => { throw new SyntaxError("Unexpected token <"); },
     });
 
-    const result = await fetchJupiterToken(SOL_MINT);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterToken(SOL_MINT)).rejects.toThrow("Unexpected token");
   });
 
   it("returns null when response is not an array", async () => {
@@ -239,11 +231,9 @@ describe("fetchJupiterToken", () => {
   // Network error
   // ───────────────────────────────────────────────
 
-  it("returns null on network error", async () => {
+  it("throws on network error", async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
 
-    const result = await fetchJupiterToken(SOL_MINT);
-
-    expect(result).toBeNull();
+    await expect(fetchJupiterToken(SOL_MINT)).rejects.toThrow("fetch failed");
   });
 });

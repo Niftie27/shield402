@@ -43,7 +43,8 @@ const TOKENS_TIMEOUT_MS = 3000;
  *
  * Searches by mint address. Verifies the exact mint matches before
  * returning — the search endpoint may return fuzzy results.
- * Returns null if the API key is unset, the call fails, or no exact match found.
+ * Returns null if the API responded but had no matching token.
+ * Throws on transport failures (network error, timeout, HTTP 5xx).
  */
 export async function fetchJupiterToken(
   mint: string,
@@ -62,7 +63,9 @@ export async function fetchJupiterToken(
       signal: controller.signal,
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      throw new Error(`Jupiter Tokens V2 API returned HTTP ${response.status}`);
+    }
 
     const data = (await response.json()) as Array<Record<string, unknown>>;
 
@@ -85,8 +88,6 @@ export async function fetchJupiterToken(
       audit: token.audit as JupiterTokenAudit | undefined,
       tags: token.tags as string[] | undefined,
     };
-  } catch {
-    return null;
   } finally {
     clearTimeout(timeout);
   }

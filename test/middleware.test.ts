@@ -22,6 +22,7 @@ let baseUrl: string;
 describe("API key auth", () => {
   beforeAll(() => {
     process.env.API_KEYS = "test-key-1,test-key-2";
+    process.env.RUGCHECK_DISABLED = "true";
     const app = createApp();
     server = app.listen(0);
     const port = (server.address() as AddressInfo).port;
@@ -96,6 +97,7 @@ describe("API key auth disabled", () => {
 
   beforeAll(() => {
     delete process.env.API_KEYS;
+    process.env.RUGCHECK_DISABLED = "true";
     const app = createApp();
     noAuthServer = app.listen(0);
     const port = (noAuthServer.address() as AddressInfo).port;
@@ -124,6 +126,7 @@ describe("Rate limiting", () => {
 
   beforeAll(() => {
     delete process.env.API_KEYS;
+    process.env.RUGCHECK_DISABLED = "true";
     const app = createApp();
     rlServer = app.listen(0);
     const port = (rlServer.address() as AddressInfo).port;

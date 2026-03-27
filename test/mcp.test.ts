@@ -60,7 +60,7 @@ beforeAll(async () => {
   proc = spawn("npx", ["tsx", "src/mcp/server.ts"], {
     stdio: ["pipe", "pipe", "pipe"],
     // Empty string is falsy — disables live data fetching and RPC calls in child process
-    env: { ...process.env, JUPITER_API_KEY: "", RUGCHECK_API_KEY: "", SOLANA_RPC_URL: "" },
+    env: { ...process.env, JUPITER_API_KEY: "", RUGCHECK_DISABLED: "true", SOLANA_RPC_URL: "" },
   });
 
   proc.stdout!.on("data", (data: Buffer) => {
@@ -150,6 +150,10 @@ describe("MCP server", () => {
     expect(body.risk_level).toBe("low");
     expect(body.policy_version).toBe("0.5.0");
     expect(body.live_sources).toEqual([]);
+    // Phase A: degraded mode and provenance fields present
+    expect(body.degraded).toBe(false);
+    expect(body.degraded_reasons).toEqual([]);
+    expect(Array.isArray(body.provenance)).toBe(true);
   });
 
   it("returns block for a dangerous trade", async () => {

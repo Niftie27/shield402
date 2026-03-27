@@ -164,6 +164,17 @@ export const tokenSafetyRule: Rule = {
       triggered: true,
       severity: maxSeverity,
       message: findings.join(" "),
+      evidence: {
+        findings,
+        rugcheck_input_score: rugInput?.score ?? null,
+        rugcheck_output_score: rugOutput?.score ?? null,
+        shield_input_warnings: shieldInputWarnings.map((w) => w.type),
+        shield_output_warnings: shieldOutputWarnings.map((w) => w.type),
+        input_verified: tokenInput?.isVerified ?? null,
+        output_verified: tokenOutput?.isVerified ?? null,
+        output_organic_score: tokenOutput?.organicScore ?? null,
+        output_bot_holders_pct: tokenOutput?.audit?.botHoldersPercentage ?? null,
+      },
     };
   },
 };

@@ -28,6 +28,8 @@ let checkTradeSafety: (params: {
 }) => Promise<Record<string, unknown>>;
 
 beforeAll(async () => {
+  // Disable Rugcheck to keep integration tests deterministic
+  process.env.RUGCHECK_DISABLED = "true";
   // Start Shield402 on a random port
   const app = createApp({ disableRateLimit: true });
   server = app.listen(0);
