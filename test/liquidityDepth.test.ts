@@ -42,7 +42,7 @@ describe("liquidityDepthRule", () => {
     expect(result.decision).toBe("block");
     const detail = result.rule_details.find((r) => r.rule_id === "low_liquidity");
     expect(detail?.severity).toBe("high");
-    expect(detail?.message).toContain("Extremely thin market");
+    expect(detail?.message).toContain("Extremely thin liquidity on DEAD");
   });
 
   it("blocks on extremely low liquidity (<$1K)", () => {
@@ -57,7 +57,7 @@ describe("liquidityDepthRule", () => {
     const result = evaluateTrade(makeTrade(), liveContext);
     expect(result.triggered_rules).toContain("low_liquidity");
     expect(result.decision).toBe("block");
-    expect(result.reason).toContain("Extremely thin market");
+    expect(result.reason).toContain("Extremely thin liquidity");
   });
 
   it("warns on thin liquidity ($1K-$10K)", () => {
@@ -72,7 +72,7 @@ describe("liquidityDepthRule", () => {
     const result = evaluateTrade(makeTrade(), liveContext);
     expect(result.triggered_rules).toContain("low_liquidity");
     expect(result.decision).toBe("warn");
-    expect(result.reason).toContain("Thin market");
+    expect(result.reason).toContain("Thin liquidity");
   });
 
   it("passes on adequate liquidity with no price impact", () => {
@@ -212,5 +212,97 @@ describe("liquidityDepthRule", () => {
 
     const result = evaluateTrade(makeTrade(), liveContext);
     expect(result.recommendation).toContain("liquidity");
+  });
+
+  // --- Both-sides behavior ---
+
+  it("shows both sides in pair summary when both available", () => {
+    const liveContext: LiveContext = {
+      jupiter_token_input: {
+        mint: SOL_MINT,
+        symbol: "JUP",
+        liquidity: 2_000_000,
+      },
+      jupiter_token_output: {
+        mint: USDC_MINT,
+        symbol: "USDC",
+        liquidity: 500_000_000,
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "low_liquidity");
+    expect(detail?.triggered).toBe(false);
+    expect(detail?.message).toContain("Input JUP");
+    expect(detail?.message).toContain("Output USDC");
+    expect(detail?.message).toContain("Adequate");
+    expect(detail?.message).toContain("Weaker side: JUP");
+  });
+
+  it("reports input token in triggered warning when it has lower liquidity", () => {
+    const liveContext: LiveContext = {
+      jupiter_token_input: {
+        mint: SOL_MINT,
+        symbol: "THINPUT",
+        liquidity: 3_000,
+      },
+      jupiter_token_output: {
+        mint: USDC_MINT,
+        symbol: "USDC",
+        liquidity: 500_000_000,
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "low_liquidity");
+    expect(detail?.triggered).toBe(true);
+    // Both sides shown in pair summary
+    expect(detail?.message).toContain("Input THINPUT");
+    expect(detail?.message).toContain("Output USDC");
+    // Warning specifically calls out the weak side
+    expect(detail?.message).toContain("Thin liquidity on THINPUT");
+  });
+
+  it("uses only available side when other side has no data", () => {
+    const liveContext: LiveContext = {
+      jupiter_token_input: {
+        mint: SOL_MINT,
+        symbol: "ONLY",
+        liquidity: 50_000,
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "low_liquidity");
+    expect(detail?.triggered).toBe(false);
+    expect(detail?.message).toContain("ONLY");
+    // Should NOT have "Weaker side:" when only one side
+    expect(detail?.message).not.toContain("Weaker side");
+  });
+
+  it("includes full both-sides evidence", () => {
+    const liveContext: LiveContext = {
+      jupiter_token_input: {
+        mint: SOL_MINT,
+        symbol: "JUP",
+        liquidity: 2_000_000,
+      },
+      jupiter_token_output: {
+        mint: USDC_MINT,
+        symbol: "USDC",
+        liquidity: 500_000_000,
+      },
+    };
+
+    const result = evaluateTrade(makeTrade(), liveContext);
+    const detail = result.rule_details.find((r) => r.rule_id === "low_liquidity");
+    const ev = detail?.evidence as Record<string, unknown>;
+    expect(ev.input_symbol).toBe("JUP");
+    expect(ev.input_liquidity_usd).toBe(2_000_000);
+    expect(ev.output_symbol).toBe("USDC");
+    expect(ev.output_liquidity_usd).toBe(500_000_000);
+    expect(ev.weaker_side).toBe("input");
+    expect(ev.weaker_symbol).toBe("JUP");
+    expect(ev.weaker_liquidity_usd).toBe(2_000_000);
   });
 });

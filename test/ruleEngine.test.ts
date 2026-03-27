@@ -900,7 +900,9 @@ describe("evidence payloads", () => {
     const result = evaluateTrade(makeTrade(), liveContext);
     const detail = result.rule_details.find((r) => r.rule_id === "low_liquidity");
     expect(detail?.evidence).toMatchObject({
-      liquidity_usd: 500,
+      weaker_liquidity_usd: 500,
+      weaker_symbol: "USDC",
+      weaker_side: "output",
       trigger: "below_block_floor",
     });
   });
